@@ -231,9 +231,9 @@ func buildChatGPTWebImagesStreamBodyFromResults(model string, results []string) 
 			"output":     []any{},
 		},
 	})
-	builder.WriteString("event: response.created\ndata: ")
-	builder.Write(created)
-	builder.WriteString("\n\n")
+	_, _ = builder.WriteString("event: response.created\ndata: ")
+	_, _ = builder.Write(created)
+	_, _ = builder.WriteString("\n\n")
 	for index, result := range results {
 		item, _ := json.Marshal(map[string]any{
 			"type":         "response.output_item.done",
@@ -245,13 +245,13 @@ func buildChatGPTWebImagesStreamBodyFromResults(model string, results []string) 
 				"result": result,
 			},
 		})
-		builder.WriteString("event: response.output_item.done\ndata: ")
-		builder.Write(item)
-		builder.WriteString("\n\n")
+		_, _ = builder.WriteString("event: response.output_item.done\ndata: ")
+		_, _ = builder.Write(item)
+		_, _ = builder.WriteString("\n\n")
 	}
-	builder.WriteString("event: response.completed\ndata: ")
-	builder.Write(completed)
-	builder.WriteString("\n\n")
+	_, _ = builder.WriteString("event: response.completed\ndata: ")
+	_, _ = builder.Write(completed)
+	_, _ = builder.WriteString("\n\n")
 	return []byte(builder.String())
 }
 

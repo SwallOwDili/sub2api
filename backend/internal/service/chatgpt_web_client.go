@@ -1079,29 +1079,6 @@ func (s *chatGPTWebSession) downloadBytes(ctx context.Context, target string) ([
 	return io.ReadAll(io.LimitReader(response.Body, 64<<20))
 }
 
-// imageQuota 读取网页侧 image_gen 剩余额度，用于账号调度与限流诊断。
-func (s *chatGPTWebSession) imageQuota(ctx context.Context) (int, error) {
-	path := "/backend-api/conversation/init"
-	response, err := s.doJSON(ctx, http.MethodPost, path, map[string]any{
-		"conversation_id":         nil,
-		"gizmo_id":                nil,
-		"requested_default_model": nil,
-	}, nil)
-	if err != nil {
-		return 0, err
-	}
-	body, err := readChatGPTWebBody(response)
-	if err != nil {
-		return 0, err
-	}
-	for _, item := range gjson.GetBytes(body, "limits_progress").Array() {
-		if item.Get("feature_name").String() == "image_gen" {
-			return int(item.Get("remaining").Int()), nil
-		}
-	}
-	return 0, nil
-}
-
 // chatGPTWebMaxImagesPerRequest 是单次请求允许的并发生图数上限。
 // 网页端每条会话都是浏览器侧的真实回合，并发过高会触发账号滥用控制。
 const chatGPTWebMaxImagesPerRequest = 4

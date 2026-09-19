@@ -123,6 +123,29 @@ func chatGPTWebE2ESession(t *testing.T) *chatGPTWebSession {
 	return newChatGPTWebSession(transport, nil, chatGPTWebE2EResolveToken(t, transport), chatGPTWebDevice{})
 }
 
+// imageQuota reads the web image_gen allowance for the real-chain diagnostic.
+func (s *chatGPTWebSession) imageQuota(ctx context.Context) (int, error) {
+	path := "/backend-api/conversation/init"
+	response, err := s.doJSON(ctx, http.MethodPost, path, map[string]any{
+		"conversation_id":         nil,
+		"gizmo_id":                nil,
+		"requested_default_model": nil,
+	}, nil)
+	if err != nil {
+		return 0, err
+	}
+	body, err := readChatGPTWebBody(response)
+	if err != nil {
+		return 0, err
+	}
+	for _, item := range gjson.GetBytes(body, "limits_progress").Array() {
+		if item.Get("feature_name").String() == "image_gen" {
+			return int(item.Get("remaining").Int()), nil
+		}
+	}
+	return 0, nil
+}
+
 func isChatGPTWebImageBytes(raw []byte) bool {
 	switch {
 	case len(raw) > 8 && string(raw[:8]) == "\x89PNG\r\n\x1a\n":

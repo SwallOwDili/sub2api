@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha3"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/sha3"
 )
 
 // ChatGPT Web 网页链路的 sentinel proof-of-work token 生成。
@@ -239,16 +239,10 @@ func chatGPTWebPowGenerate(seed, difficulty string, config []any, limit int) (st
 	middle := chatGPTWebCompactJSON(config[4:9])
 	middle = "," + strings.TrimSuffix(strings.TrimPrefix(middle, "["), "]") + ","
 	tail := "," + strings.TrimPrefix(chatGPTWebCompactJSON(config[10:]), "[")
-	seedBytes := []byte(seed)
-
-	hasher := sha3.New512()
 	for i := 0; i < limit; i++ {
 		payload := head + strconv.Itoa(i) + middle + strconv.Itoa(i>>1) + tail
 		encoded := base64.StdEncoding.EncodeToString([]byte(payload))
-		hasher.Reset()
-		_, _ = hasher.Write(seedBytes)
-		_, _ = hasher.Write([]byte(encoded))
-		digest := hasher.Sum(nil)
+		digest := sha3.Sum512([]byte(seed + encoded))
 		if bytes.Compare(digest[:len(target)], target) <= 0 {
 			return encoded, true
 		}
