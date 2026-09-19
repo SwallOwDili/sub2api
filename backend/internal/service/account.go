@@ -1612,7 +1612,7 @@ func (a *Account) GetOpenAIAccessToken() string {
 }
 
 func (a *Account) GetOpenAIRefreshToken() string {
-	if !a.IsOpenAIOAuth() {
+	if !a.IsOpenAIOAuth() && !a.IsOpenAIWebImage() {
 		return ""
 	}
 	return a.GetCredential("refresh_token")
@@ -1793,6 +1793,11 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	if capability == "" {
 		return true
+	}
+	// ChatGPT 网页账号只服务图片端点（图片请求不声明 endpoint capability）。
+	// 若放行 chat/responses，它会被文本流量打到 429，从而把网页生图额度一起锁死。
+	if a.Type == AccountTypeWebImage || a.Type == accountTypeWebImageLegacy {
+		return false
 	}
 	if !a.IsOpenAICompatible() {
 		return false
@@ -1979,7 +1984,7 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 	}
 	switch capability {
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
-		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeAPIKey
+		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeAPIKey || a.IsOpenAIWebImage()
 	default:
 		return true
 	}
@@ -2000,7 +2005,7 @@ func (a *Account) GetOpenAIOrganizationID() string {
 }
 
 func (a *Account) GetOpenAITokenExpiresAt() *time.Time {
-	if !a.IsOpenAIOAuth() {
+	if !a.IsOpenAIOAuth() && !a.IsOpenAIWebImage() {
 		return nil
 	}
 	return a.GetCredentialAsTime("expires_at")

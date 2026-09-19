@@ -404,6 +404,33 @@
             </div>
           </button>
 
+          <button
+            type="button"
+            data-testid="create-openai-web-category"
+            @click="accountCategory = 'web-image'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'web-image'
+                ? 'border-teal-500 bg-teal-50 dark:bg-teal-900/20'
+                : 'border-gray-200 hover:border-teal-300 dark:border-dark-600 dark:hover:border-teal-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'web-image'
+                  ? 'bg-teal-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="globe" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">ChatGPT Web Image</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.chatgptWeb') }}</span>
+            </div>
+          </button>
+
         </div>
       </div>
 
@@ -3481,8 +3508,8 @@
         :show-session-token-option="false"
         :show-access-token-option="false"
         :show-codex-session-import-option="form.platform === 'openai'"
-        :show-agent-identity-option="form.platform === 'openai'"
-        :show-codex-pat-option="form.platform === 'openai'"
+        :show-agent-identity-option="form.platform === 'openai' && accountCategory !== 'web-image'"
+        :show-codex-pat-option="form.platform === 'openai' && accountCategory !== 'web-image'"
         :show-sso-option="form.platform === 'grok'"
         :show-email-password-option="false"
         :show-manual-option="true"
@@ -4068,7 +4095,7 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'apikey' | 'web-image' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
@@ -4612,7 +4639,7 @@ const isOAuthFlow = computed(() => {
   if (form.platform === 'anthropic' && accountCategory.value === 'bedrock') {
     return false
   }
-  return accountCategory.value === 'oauth-based'
+  return accountCategory.value === 'oauth-based' || accountCategory.value === 'web-image'
 })
 
 const isGrokSSOInputMethod = computed(() => form.platform === 'grok' && oauthFlowRef.value?.inputMethod === 'sso_cookie')
@@ -4690,6 +4717,9 @@ watch(
     }
     if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
       form.type = 'service_account' as AccountType
+    } else if (category === 'web-image') {
+      // ChatGPT 网页账号：只服务网页生图，限流状态与 OAuth/Codex 账号隔离
+      form.type = 'web-image' as AccountType
     } else if (category === 'oauth-based') {
       form.type = form.platform === 'anthropic' ? method as AccountType : 'oauth'
     } else {
@@ -6196,7 +6226,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         name: form.name,
         notes: form.notes,
         platform: 'openai',
-        type: 'oauth',
+        type: form.type,
         credentials,
         extra: withUpstreamRequestIdHeader(extra),
         proxy_id: form.proxy_id,
@@ -6302,6 +6332,8 @@ const handleOpenAIImportCodexSession = async (content: string) => {
     const extra = buildOpenAICodexImportExtra()
     const result = await adminAPI.accounts.importCodexSession({
       content: trimmed,
+      // 与表单分类一致：web-image 分类下导入为网页生图账号，其余仍为 oauth
+      type: form.type === 'web-image' ? 'web-image' : 'oauth',
       name: form.name,
       notes: form.notes || null,
       proxy_id: form.proxy_id,
@@ -6477,7 +6509,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             name: accountName,
             notes: form.notes,
             platform: 'openai',
-            type: 'oauth',
+            type: form.type,
             credentials,
             extra: withUpstreamRequestIdHeader(extra),
             proxy_id: form.proxy_id,
@@ -6957,7 +6989,9 @@ const handleCookieAuth = async (sessionKey: string) => {
           name: accountName,
           notes: form.notes,
           platform: form.platform,
-          type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
+          // OpenAI 按表单分类决定类型（oauth / web-image）；Anthropic 用 addMethod
+          // （oauth / setup-token）。其它平台的 addMethod 恒为默认 'oauth'，等价于原行为。
+          type: form.platform === 'openai' ? form.type : addMethod.value,
           credentials,
           extra: withUpstreamRequestIdHeader(extra),
           proxy_id: form.proxy_id,

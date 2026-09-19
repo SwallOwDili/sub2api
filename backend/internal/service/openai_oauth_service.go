@@ -340,7 +340,7 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 	if account.Platform != PlatformOpenAI {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT", "account is not an OpenAI account")
 	}
-	if account.Type != AccountTypeOAuth {
+	if !account.IsOpenAIOAuth() && !account.IsOpenAIWebImage() {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT_TYPE", "account is not an OAuth account")
 	}
 

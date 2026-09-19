@@ -1224,10 +1224,10 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 	}
 	if options.IncludeSetupToken {
 		query += `
-			AND type IN ('oauth', 'setup-token')`
+			AND (type IN ('oauth', 'setup-token') OR (platform = 'openai' AND type IN ('web-image', 'web')))`
 	} else {
 		query += `
-			AND type = 'oauth'`
+			AND (type = 'oauth' OR (platform = 'openai' AND type IN ('web-image', 'web')))`
 	}
 	if options.RequireRefreshToken {
 		query += `

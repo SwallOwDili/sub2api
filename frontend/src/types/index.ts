@@ -914,7 +914,7 @@ export interface UpdateGroupRequest {
 // ==================== Account & Proxy Types ====================
 
 export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax'
-export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
+export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'web-image' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
 
@@ -1614,6 +1614,8 @@ export interface AdminDataImportResult {
 }
 
 export interface CodexSessionImportRequest {
+  // 可选：oauth（默认）或 web-image，决定导入出的账号类型
+  type?: 'oauth' | 'web-image'
   content?: string
   contents?: string[]
   name?: string

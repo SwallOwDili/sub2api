@@ -361,6 +361,7 @@ export default {
       types: {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
+        chatgptWeb: 'ChatGPT 网页（生图专用）',
         responsesApi: 'Responses API',
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',

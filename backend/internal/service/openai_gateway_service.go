@@ -1213,6 +1213,21 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 		account = credAccount
 	}
 	switch account.Type {
+	case AccountTypeWebImage, accountTypeWebImageLegacy:
+		// 网页账号与 OAuth 账号用同一套 access_token/refresh_token，凭据形态一致：
+		// 优先走 TokenProvider（缓存 + 到期刷新），无 Provider 时直接读凭据。
+		if s.openAITokenProvider != nil {
+			accessToken, err := s.openAITokenProvider.GetAccessToken(ctx, account)
+			if err != nil {
+				return "", "", err
+			}
+			return accessToken, "oauth", nil
+		}
+		accessToken := account.GetOpenAIAccessToken()
+		if accessToken == "" {
+			return "", "", errors.New("access_token not found in credentials")
+		}
+		return accessToken, "oauth", nil
 	case AccountTypeOAuth:
 		if account.IsOpenAIAgentIdentity() {
 			return "", OpenAIAuthModeAgentIdentity, nil

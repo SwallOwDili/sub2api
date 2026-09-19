@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -20,6 +21,7 @@ import (
 // All slice fields use built-in defaults when empty.
 type Profile struct {
 	Name                string // Profile name for identification
+	Preset              string // 内置预设名（PresetChrome）；非空时忽略下面的手工字段
 	CipherSuites        []uint16
 	Curves              []uint16
 	PointFormats        []uint16
@@ -31,6 +33,11 @@ type Profile struct {
 	PSKModes            []uint16 // Empty uses [psk_dhe_ke]
 	Extensions          []uint16 // Extension type IDs in order; empty uses default Node.js 24.x order
 }
+
+// PresetChrome 使用 uTLS 内置的 Chrome ClientHello（GREASE、扩展顺序、ALPS、
+// compress_certificate 等均为真实 Chrome 形态）。默认 Node.js 风格的手工指纹在
+// Cloudflare 前置站点上会被判为可疑客户端并下发 403 challenge。
+const PresetChrome = "chrome"
 
 // Dialer creates TLS connections with custom fingerprints.
 type Dialer struct {
@@ -333,7 +340,30 @@ func isGREASEValue(v uint16) bool {
 
 // buildClientHelloSpecFromProfile constructs ClientHelloSpec from a Profile.
 // This is a standalone function that can be used by both Dialer and HTTPProxyDialer.
+// buildChromePresetSpec 取 uTLS 内置 Chrome ClientHello，并按需覆盖 ALPN。
+//
+// spec 必须每次握手重新生成：ApplyPreset 会就地改写它（GREASE 化），
+// 复用同一份 spec 会让第二次握手以 "tls: internal error" 失败。
+func buildChromePresetSpec(profile *Profile) *utls.ClientHelloSpec {
+	spec, err := utls.UTLSIdToSpec(utls.HelloChrome_Auto)
+	if err != nil {
+		slog.Warn("tls_fingerprint_chrome_preset_failed", "error", err)
+		return &utls.ClientHelloSpec{}
+	}
+	if profile != nil && len(profile.ALPNProtocols) > 0 {
+		for _, extension := range spec.Extensions {
+			if alpn, ok := extension.(*utls.ALPNExtension); ok {
+				alpn.AlpnProtocols = profile.ALPNProtocols
+			}
+		}
+	}
+	return &spec
+}
+
 func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
+	if profile != nil && strings.EqualFold(strings.TrimSpace(profile.Preset), PresetChrome) {
+		return buildChromePresetSpec(profile)
+	}
 	// Resolve effective values (profile overrides or built-in defaults)
 	cipherSuites := defaultCipherSuites
 	if profile != nil && len(profile.CipherSuites) > 0 {

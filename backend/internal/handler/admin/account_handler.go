@@ -117,7 +117,7 @@ type CreateAccountRequest struct {
 	Name                    string         `json:"name" binding:"required"`
 	Notes                   *string        `json:"notes"`
 	Platform                string         `json:"platform" binding:"required"`
-	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey web-image upstream bedrock service_account"`
 	Credentials             map[string]any `json:"credentials" binding:"required"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
@@ -137,7 +137,7 @@ type CreateAccountRequest struct {
 type UpdateAccountRequest struct {
 	Name                    string         `json:"name"`
 	Notes                   *string        `json:"notes"`
-	Type                    string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Type                    string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey web-image upstream bedrock service_account"`
 	Credentials             map[string]any `json:"credentials"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
@@ -1382,7 +1382,7 @@ func (h *AccountHandler) PreviewFromCRS(c *gin.Context) {
 // refreshSingleAccount refreshes credentials for a single OAuth account.
 // Returns (updatedAccount, warning, error) where warning is used for Antigravity ProjectIDMissing scenario.
 func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *service.Account) (*service.Account, string, error) {
-	if !account.IsOAuth() {
+	if !account.IsOAuth() && !account.IsOpenAIWebImage() {
 		return nil, "", infraerrors.BadRequest("NOT_OAUTH", "cannot refresh non-OAuth account")
 	}
 	// spark 影子凭据由母账号管理、自身恒空,刷新无意义且会先打上游;在调用上游前早拒
@@ -1556,7 +1556,7 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 
 // ApplyOAuthCredentialsRequest is the payload for persisting re-authorized OAuth credentials.
 type ApplyOAuthCredentialsRequest struct {
-	Type        string         `json:"type" binding:"required,oneof=oauth setup-token"`
+	Type        string         `json:"type" binding:"required,oneof=oauth setup-token web-image"`
 	Credentials map[string]any `json:"credentials" binding:"required"`
 	Extra       map[string]any `json:"extra"`
 }
@@ -1595,8 +1595,12 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		response.NotFound(c, "Account not found")
 		return
 	}
-	if !existing.IsOAuth() {
+	if !existing.IsOAuth() && !existing.IsOpenAIWebImage() {
 		response.ErrorFrom(c, infraerrors.BadRequest("NOT_OAUTH", "cannot apply oauth credentials to non-OAuth account"))
+		return
+	}
+	if existing.IsOpenAIWebImage() && req.Type != service.AccountTypeWebImage {
+		response.ErrorFrom(c, infraerrors.BadRequest("WEB_IMAGE_TYPE_IMMUTABLE", "web-image reauthorization must preserve account type"))
 		return
 	}
 	if err := service.ValidateOpenAILongContextBillingExtra(existing.Platform, req.Extra); err != nil {
@@ -1661,7 +1665,7 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		updatedAccount = cleared
 	}
 
-	if h.tokenCacheInvalidator != nil && updatedAccount.IsOAuth() {
+	if h.tokenCacheInvalidator != nil && (updatedAccount.IsOAuth() || updatedAccount.IsOpenAIWebImage()) {
 		if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(ctx, updatedAccount); invalidateErr != nil {
 			slog.Warn("apply_oauth_credentials.invalidate_token_failed",
 				"account_id", accountID,
@@ -1721,7 +1725,7 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 
 	// 清除错误后，同时清除 token 缓存，确保下次请求会获取最新的 token（触发刷新或从 DB 读取）
 	// 这解决了管理员重置账号状态后，旧的失效 token 仍在缓存中导致立即再次 401 的问题
-	if h.tokenCacheInvalidator != nil && account.IsOAuth() {
+	if h.tokenCacheInvalidator != nil && (account.IsOAuth() || account.IsOpenAIWebImage()) {
 		if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(c.Request.Context(), account); invalidateErr != nil {
 			log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", accountID, invalidateErr)
 		}
@@ -1922,7 +1926,7 @@ func (h *AccountHandler) BatchClearError(c *gin.Context) {
 			}
 
 			// 清除错误后，同时清除 token 缓存
-			if h.tokenCacheInvalidator != nil && account.IsOAuth() {
+			if h.tokenCacheInvalidator != nil && (account.IsOAuth() || account.IsOpenAIWebImage()) {
 				if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(gctx, account); invalidateErr != nil {
 					log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", accountID, invalidateErr)
 				}

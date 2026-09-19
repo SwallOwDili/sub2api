@@ -483,6 +483,15 @@ func TestAccountSupportsOpenAIImageCapability_SetupTokenSupportsNative(t *testin
 	require.False(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityEmbeddings))
 }
 
+func TestAccountSupportsOpenAIImageCapability_WebImageSupportsNative(t *testing.T) {
+	for _, accountType := range []string{AccountTypeWebImage, accountTypeWebImageLegacy} {
+		account := &Account{Platform: PlatformOpenAI, Type: accountType}
+		require.True(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic))
+		require.True(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative))
+		require.False(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+	}
+}
+
 func TestAccountSupportsOpenAIImageCapability_EmptyRequirementDoesNotRejectGrok(t *testing.T) {
 	account := &Account{
 		Platform: PlatformGrok,

@@ -158,6 +158,7 @@ export default {
       types: {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
+        chatgptWeb: 'ChatGPT Web (images only)',
         responsesApi: 'Responses API',
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',

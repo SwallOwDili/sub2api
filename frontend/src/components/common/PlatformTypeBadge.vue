@@ -24,6 +24,8 @@
         </svg>
         <!-- Setup Token icon -->
         <Icon v-else-if="type === 'setup-token'" name="shield" size="xs" />
+        <!-- ChatGPT Web icon -->
+        <Icon v-else-if="type === 'web-image'" name="globe" size="xs" />
         <!-- API Key icon -->
         <Icon v-else-if="type === 'service_account'" name="cloud" size="xs" />
         <Icon v-else name="key" size="xs" />
@@ -104,6 +106,8 @@ const typeLabel = computed(() => {
       return 'Token'
     case 'apikey':
       return 'Key'
+    case 'web-image':
+      return 'Web Image'
     case 'bedrock':
       return 'AWS'
     case 'service_account':

@@ -574,7 +574,14 @@ func (s *OpenAIGatewayService) ForwardImages(
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
-	case AccountTypeOAuth, AccountTypeSetupToken:
+	case AccountTypeOAuth, AccountTypeSetupToken, AccountTypeWebImage, accountTypeWebImageLegacy:
+		// web 类型直接走网页通道；OAuth/setup-token 按账号开关走，其余保持原 Codex 路径。
+		if account.UsesChatGPTWebImageChannel() {
+			return s.forwardOpenAIImagesChatGPTWeb(ctx, c, account, parsed, channelMappedModel)
+		}
+		if account.Type == AccountTypeWebImage || account.Type == accountTypeWebImageLegacy {
+			return nil, fmt.Errorf("chatgpt web image account is not eligible for the web image channel")
+		}
 		return s.forwardOpenAIImagesOAuth(ctx, c, account, parsed, channelMappedModel)
 	default:
 		return nil, fmt.Errorf("unsupported account type: %s", account.Type)

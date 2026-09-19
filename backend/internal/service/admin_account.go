@@ -537,7 +537,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 
 	// OAuth 账号：创建后异步设置隐私。
 	// 使用 Ensure（幂等）而非 Force：新建账号 Extra 为空时效果相同，但更安全。
-	if account.Type == AccountTypeOAuth {
+	if account.Type == AccountTypeOAuth || account.IsOpenAIWebImage() {
 		switch account.Platform {
 		case PlatformOpenAI:
 			go func() {
@@ -1625,7 +1625,7 @@ func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Acc
 	if account.IsCredentialShadow() {
 		return ""
 	}
-	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
+	if account.Platform != PlatformOpenAI || (!account.IsOpenAIOAuth() && !account.IsOpenAIWebImage()) {
 		return ""
 	}
 	if s.privacyClientFactory == nil {
@@ -1662,7 +1662,7 @@ func (s *adminServiceImpl) ForceOpenAIPrivacy(ctx context.Context, account *Acco
 	if account.IsCredentialShadow() {
 		return ""
 	}
-	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
+	if account.Platform != PlatformOpenAI || (!account.IsOpenAIOAuth() && !account.IsOpenAIWebImage()) {
 		return ""
 	}
 	if s.privacyClientFactory == nil {
