@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -698,6 +699,7 @@ func (s *chatGPTWebSession) prepareImageConversation(
 	upstreamModel string,
 	references []*chatGPTWebReference,
 ) (string, error) {
+	// Image generations must not create persistent ChatGPT sidebar conversations.
 	path := "/backend-api/f/conversation/prepare"
 	partialContent := map[string]any{"content_type": "text", "parts": []any{prompt}}
 	if len(references) > 0 {
@@ -813,7 +815,8 @@ type chatGPTWebImageOutcome struct {
 	Pointers       []string
 }
 
-// collectImagePointers 只接受工具消息里的图片指针：既排除用户输入附件，也排除上传占位。
+// collectImagePointers 只接受工具或助手输出消息里的图片指针：
+// 既排除用户输入附件，也排除上传占位。
 func chatGPTWebCollectImagePointers(node any, conversationID *string, pointers *[]string) {
 	switch value := node.(type) {
 	case map[string]any:
@@ -822,7 +825,7 @@ func chatGPTWebCollectImagePointers(node any, conversationID *string, pointers *
 		}
 		candidate := false
 		if author, ok := value["author"].(map[string]any); ok {
-			if role, ok := author["role"].(string); ok && role == "tool" {
+			if role, ok := author["role"].(string); ok && (role == "tool" || role == "assistant") {
 				candidate = true
 			}
 		}
@@ -945,24 +948,63 @@ func (s *chatGPTWebSession) fetchConversationImages(
 	}
 }
 
-// downloadPointer 把 asset_pointer 解析成图片字节：先取下载地址，再下载内容。
-func (s *chatGPTWebSession) downloadPointer(
+// deleteConversation removes a completed image-generation conversation from ChatGPT.
+func (s *chatGPTWebSession) deleteConversation(ctx context.Context, conversationID string) error {
+	if strings.TrimSpace(conversationID) == "" {
+		return nil
+	}
+	path := "/backend-api/conversation/id/" + conversationID
+	response, err := s.doJSON(ctx, http.MethodDelete, path, nil, map[string]string{
+		"Accept":                "*/*",
+		"Referer":               s.baseURL + "/c/" + conversationID,
+		"X-OAI-Web-Frontend":    "core_web",
+		"X-OpenAI-Target-Route": "/backend-api/conversation/id/{conversation_id}",
+	})
+	if err != nil {
+		return err
+	}
+	_, err = readChatGPTWebBody(response)
+	return err
+}
+
+func (s *chatGPTWebSession) cleanupImageConversation(ctx context.Context, conversationID string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := s.deleteConversation(cleanupCtx, conversationID); err != nil {
+		logger.LegacyPrintf("service.openai_gateway", "[ChatGPTWebImage] conversation cleanup failed id=%s err=%v", conversationID, err)
+	}
+}
+
+// scheduleImageConversationCleanup keeps best-effort sidebar cleanup off the
+// response critical path. cleanupImageConversation detaches from request
+// cancellation and applies its own timeout, so it remains safe after the
+// caller returns or the downstream client disconnects.
+func (s *chatGPTWebSession) scheduleImageConversationCleanup(ctx context.Context, conversationID string) {
+	if strings.TrimSpace(conversationID) == "" {
+		return
+	}
+	go s.cleanupImageConversation(ctx, conversationID)
+}
+
+// resolvePointerDownloadURL resolves a generated asset pointer into the signed
+// URL issued by ChatGPT without downloading the image itself.
+func (s *chatGPTWebSession) resolvePointerDownloadURL(
 	ctx context.Context,
 	conversationID string,
 	pointer string,
-) ([]byte, error) {
+) (string, error) {
 	path := ""
 	switch {
 	case strings.HasPrefix(pointer, "file-service://"):
 		path = "/backend-api/files/" + strings.TrimPrefix(pointer, "file-service://") + "/download"
 	case strings.HasPrefix(pointer, "sediment://"):
 		if strings.TrimSpace(conversationID) == "" {
-			return nil, fmt.Errorf("sediment pointer requires conversation id")
+			return "", fmt.Errorf("sediment pointer requires conversation id")
 		}
 		path = "/backend-api/conversation/" + conversationID + "/attachment/" +
 			strings.TrimPrefix(pointer, "sediment://") + "/download"
 	default:
-		return nil, fmt.Errorf("unsupported chatgpt web image pointer: %s", pointer)
+		return "", fmt.Errorf("unsupported chatgpt web image pointer: %s", pointer)
 	}
 
 	var lastErr error
@@ -976,7 +1018,7 @@ func (s *chatGPTWebSession) downloadPointer(
 					downloadURL = strings.TrimSpace(gjson.GetBytes(body, "url").String())
 				}
 				if downloadURL != "" {
-					return s.downloadBytes(ctx, downloadURL)
+					return downloadURL, nil
 				}
 				lastErr = fmt.Errorf("chatgpt web image download url is empty")
 			} else {
@@ -989,14 +1031,27 @@ func (s *chatGPTWebSession) downloadPointer(
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return "", ctx.Err()
 		case <-timer.C:
 		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("chatgpt web image download failed")
 	}
-	return nil, lastErr
+	return "", lastErr
+}
+
+// downloadPointer resolves an asset pointer and downloads its image bytes.
+func (s *chatGPTWebSession) downloadPointer(
+	ctx context.Context,
+	conversationID string,
+	pointer string,
+) ([]byte, error) {
+	downloadURL, err := s.resolvePointerDownloadURL(ctx, conversationID, pointer)
+	if err != nil {
+		return nil, err
+	}
+	return s.downloadBytes(ctx, downloadURL)
 }
 
 func (s *chatGPTWebSession) downloadBytes(ctx context.Context, target string) ([]byte, error) {
@@ -1063,6 +1118,7 @@ func (s *chatGPTWebSession) generateAndDownload(
 	if err != nil {
 		return nil, err
 	}
+	defer s.scheduleImageConversationCleanup(ctx, outcome.ConversationID)
 	images := make([][]byte, 0, len(outcome.Pointers))
 	var lastErr error
 	for _, pointer := range outcome.Pointers {
@@ -1080,6 +1136,105 @@ func (s *chatGPTWebSession) generateAndDownload(
 		return nil, fmt.Errorf("chatgpt web image generation returned no downloadable image")
 	}
 	return images, nil
+}
+
+func (s *chatGPTWebSession) generateAndResolveImageResults(
+	ctx context.Context,
+	prompt string,
+	requestModel string,
+	upstreamModel string,
+	references []*chatGPTWebReference,
+) ([]string, error) {
+	outcome, err := s.GenerateImage(ctx, prompt, requestModel, upstreamModel, references)
+	if err != nil {
+		return nil, err
+	}
+	defer s.scheduleImageConversationCleanup(ctx, outcome.ConversationID)
+	results := make([]string, 0, len(outcome.Pointers))
+	var lastErr error
+	for _, pointer := range outcome.Pointers {
+		downloadURL, resolveErr := s.resolvePointerDownloadURL(ctx, outcome.ConversationID, pointer)
+		if resolveErr != nil {
+			lastErr = resolveErr
+			continue
+		}
+		// Only cross-origin HTTPS asset URLs are independently usable by the
+		// caller. ChatGPT first-party URLs require the account Authorization
+		// headers, so preserve the old gateway-download behavior for them.
+		parsedURL, parseErr := url.Parse(downloadURL)
+		if parseErr == nil && strings.EqualFold(parsedURL.Scheme, "https") &&
+			strings.TrimSpace(parsedURL.Hostname()) != "" && !isChatGPTWebFirstPartyURL(downloadURL) {
+			results = append(results, downloadURL)
+			continue
+		}
+		raw, downloadErr := s.downloadBytes(ctx, downloadURL)
+		if downloadErr != nil {
+			lastErr = downloadErr
+			continue
+		}
+		mimeType := strings.ToLower(strings.TrimSpace(http.DetectContentType(raw)))
+		if !strings.HasPrefix(mimeType, "image/") {
+			lastErr = fmt.Errorf("chatgpt web image download returned non-image content type %s", mimeType)
+			continue
+		}
+		results = append(results, "data:"+mimeType+";base64,"+base64.StdEncoding.EncodeToString(raw))
+	}
+	if len(results) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("chatgpt web image generation returned no image result")
+	}
+	return results, nil
+}
+
+// GenerateImageResultBatch returns anonymous signed URLs when possible and
+// data URLs when ChatGPT returns a first-party authenticated URL.
+func (s *chatGPTWebSession) GenerateImageResultBatch(
+	ctx context.Context,
+	prompt string,
+	requestModel string,
+	upstreamModel string,
+	references []*chatGPTWebReference,
+	count int,
+) ([]string, error) {
+	if count <= 1 {
+		return s.generateAndResolveImageResults(ctx, prompt, requestModel, upstreamModel, references)
+	}
+	type slot struct {
+		results []string
+		err     error
+	}
+	slots := make([]slot, count)
+	var wait sync.WaitGroup
+	for index := 0; index < count; index++ {
+		wait.Add(1)
+		go func(target int) {
+			defer wait.Done()
+			results, err := s.generateAndResolveImageResults(ctx, prompt, requestModel, upstreamModel, references)
+			slots[target] = slot{results: results, err: err}
+		}(index)
+	}
+	wait.Wait()
+
+	merged := make([]string, 0, count)
+	var firstErr error
+	for _, item := range slots {
+		if item.err != nil {
+			if firstErr == nil {
+				firstErr = item.err
+			}
+			continue
+		}
+		merged = append(merged, item.results...)
+	}
+	if len(merged) == 0 {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("chatgpt web image generation returned no image result")
+		}
+		return nil, firstErr
+	}
+	return merged, nil
 }
 
 // GenerateImageBatch 生成 count 张图片。
@@ -1159,10 +1314,12 @@ func (s *chatGPTWebSession) GenerateImage(
 	streamErr := chatGPTWebConsumeImageStream(response.Body, outcome)
 	_ = response.Body.Close()
 	if streamErr != nil && len(outcome.Pointers) == 0 {
+		s.scheduleImageConversationCleanup(ctx, outcome.ConversationID)
 		return nil, streamErr
 	}
 	if len(outcome.Pointers) == 0 {
 		if err := s.fetchConversationImages(ctx, outcome.ConversationID, outcome); err != nil {
+			s.scheduleImageConversationCleanup(ctx, outcome.ConversationID)
 			return nil, err
 		}
 	}

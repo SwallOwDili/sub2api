@@ -35,7 +35,8 @@ POST /backend-api/sentinel/chat-requirements/finalize
 POST /backend-api/f/conversation/prepare          {"system_hints":["picture_v2"]}  -> conduit_token
 POST /backend-api/f/conversation                  (SSE) -> 工具消息里的图片指针
 GET  /backend-api/files/{id}/download | /conversation/{cid}/attachment/{aid}/download
-      -> download_url -> 图片字节（需带 Authorization/Origin/Referer，否则 403）
+      -> download_url -> 匿名 HTTPS 签名地址直返，或由网关下载需鉴权的第一方地址
+DELETE /backend-api/conversation/id/{cid}          -> 异步清理生图会话
 GET  /backend-api/conversation/init               -> limits_progress[feature_name=image_gen] 剩余额度
 ```
 
@@ -49,8 +50,9 @@ POST /backend-api/files/{file_id}/uploaded   确认
 
 随后 conversation 里以 `multimodal_text` + `file-service://{file_id}` 引用。
 
-图片只在**工具消息**中被采信：`author.role == "tool"` 且 `metadata.async_task_type == "image_gen"`，
-指针形如 `file-service://file_x` / `sediment://file_x`。用户输入附件被排除，参考图不会被当成输出。
+图片只在**工具或助手输出消息**中被采信：`author.role` 为 `tool` / `assistant`，
+或 `metadata.async_task_type == "image_gen"`；指针形如 `file-service://file_x` / `sediment://file_x`。
+用户输入附件被排除，参考图不会被当成输出。
 SSE 未给出图片时回退轮询 `/backend-api/conversation/{id}`（120s 上限）。
 
 ## Sentinel 现状
@@ -71,9 +73,12 @@ SSE 未给出图片时回退轮询 `/backend-api/conversation/{id}`（120s 上�
 | `chatgpt_web_images.go` | `/v1/images/*` 接入层，合成 Responses 事件复用既有下游 |
 | `chatgpt_web_account.go` | 账号级开关（extra 方式）与稳定设备指纹 |
 
-设计要点：网页链路拿到图片字节后**合成上游 Responses 事件**，再交给既有的
+设计要点：`response_format=url` 优先直返可匿名访问的跨域 HTTPS 签名地址；
+若 ChatGPT 返回必须携带账号凭据的第一方地址，则由网关下载后回退为 data URL。
+其他情况拿到图片字节后**合成上游 Responses 事件**，再交给既有的
 `handleOpenAIImagesOAuthNonStreamingResponse` / `handleOpenAIImagesOAuthStreamingResponse`，
-因此图片落盘、`b64_json`/`url` 转换、usage、计费与错误分类与原生 OAuth 生图完全一致。
+因此 `b64_json`/`url` 转换、usage、计费与错误分类与原生 OAuth 生图保持一致。
+生图会话在结果已取得或失败退出后进入异步最佳努力清理，不阻塞客户端响应。
 
 设备指纹（`OAI-Device-Id` / `OAI-Session-Id`）由账号标识派生 UUID，跨请求稳定。
 

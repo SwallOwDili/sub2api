@@ -675,6 +675,32 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('loads and saves model restrictions for OpenAI web-image accounts', async () => {
+    const account = buildAccount()
+    account.type = 'web-image'
+    account.credentials = {
+      access_token: 'web-image-token',
+      model_mapping: {
+        'gpt-image-2.5-sunburst': 'gpt-image-2.5-sunburst'
+      }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.text()).toContain('admin.accounts.modelRestriction')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-image-2.5-sunburst')
+
+    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'gpt-5.2-2025-12-11': 'gpt-5.2-2025-12-11'
+    })
+  })
+
   it('submits OpenAI compact mode and compact-only model mapping', async () => {
     const account = buildAccount()
     account.extra = {

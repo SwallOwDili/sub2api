@@ -675,9 +675,9 @@
         </div>
       </div>
 
-      <!-- OpenAI/Grok OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <!-- OpenAI/Grok OAuth and OpenAI Web Image model mapping -->
       <div
-        v-if="(account.platform === 'openai' || account.platform === 'grok') && account.type === 'oauth'"
+        v-if="supportsOAuthModelRestriction"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -3653,6 +3653,14 @@ const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
   }
   return 'auto'
 }
+const supportsOAuthModelRestriction = computed(() => {
+  const account = props.account
+  if (!account) return false
+  return (
+    ((account.platform === 'openai' || account.platform === 'grok') && account.type === 'oauth') ||
+    (account.platform === 'openai' && account.type === 'web-image')
+  )
+})
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
@@ -5146,8 +5154,8 @@ const handleSubmit = async () => {
       updatePayload.credentials = newCredentials
     }
 
-    // OpenAI/Grok OAuth: persist model mapping to credentials
-    if ((props.account.platform === 'openai' || props.account.platform === 'grok') && props.account.type === 'oauth') {
+    // OpenAI/Grok OAuth and OpenAI Web Image: persist model mapping to credentials
+    if (supportsOAuthModelRestriction.value) {
       const currentCredentials = isSparkShadow.value
         ? {}
         : (updatePayload.credentials as Record<string, unknown>) ||

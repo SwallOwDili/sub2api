@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,44 @@ func chatGPTWebResolveImagesRequestModel(parsed *OpenAIImagesRequest, channelMap
 		requestModel = "gpt-image-2"
 	}
 	return requestModel
+}
+
+func chatGPTWebPromptWithCanvasSize(prompt, size string) string {
+	trimmedSize := strings.ToLower(strings.TrimSpace(size))
+	if trimmedSize == "" || trimmedSize == "auto" {
+		return prompt
+	}
+	parts := strings.Split(trimmedSize, "x")
+	if len(parts) != 2 {
+		return prompt
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return prompt
+	}
+
+	orientation := "横向"
+	switch {
+	case height > width:
+		orientation = "纵向"
+	case height == width:
+		orientation = "正方形"
+	}
+	resolution := "1K"
+	if max(width, height) >= 3840 {
+		resolution = "4K"
+	} else if max(width, height) >= 2048 {
+		resolution = "2K"
+	}
+	return fmt.Sprintf(
+		"%s\n\n画布规格（必须遵循）：最终图像为 %d×%d 像素，%s画幅，%s 分辨率。不得裁切、拉伸或回退到默认正方形画布。",
+		prompt,
+		width,
+		height,
+		orientation,
+		resolution,
+	)
 }
 
 const (
@@ -138,9 +177,47 @@ func buildChatGPTWebImagesCompletedBody(model string, images [][]byte) []byte {
 	return []byte("event: response.completed\ndata: " + string(buildChatGPTWebImagesCompletedEvent(model, images)) + "\n\n")
 }
 
+func buildChatGPTWebImagesCompletedBodyFromResults(model string, results []string) []byte {
+	output := make([]any, 0, len(results))
+	for index, result := range results {
+		output = append(output, map[string]any{
+			"id":     fmt.Sprintf("ig_chatgpt_web_%d", index),
+			"type":   "image_generation_call",
+			"status": "completed",
+			"result": result,
+		})
+	}
+	payload := map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":         "resp_chatgpt_web_" + uuid.NewString(),
+			"object":     "response",
+			"model":      model,
+			"created_at": time.Now().Unix(),
+			"status":     "completed",
+			"output":     output,
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return []byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n")
+	}
+	return []byte("event: response.completed\ndata: " + string(encoded) + "\n\n")
+}
+
 // buildChatGPTWebImagesStreamBody 合成 SSE 事件序列，事件顺序与真实上游一致。
 func buildChatGPTWebImagesStreamBody(model string, images [][]byte) []byte {
-	completed := buildChatGPTWebImagesCompletedEvent(model, images)
+	results := make([]string, 0, len(images))
+	for _, raw := range images {
+		results = append(results, base64.StdEncoding.EncodeToString(raw))
+	}
+	return buildChatGPTWebImagesStreamBodyFromResults(model, results)
+}
+
+func buildChatGPTWebImagesStreamBodyFromResults(model string, results []string) []byte {
+	completed := buildChatGPTWebImagesCompletedBodyFromResults(model, results)
+	completed = bytes.TrimPrefix(completed, []byte("event: response.completed\ndata: "))
+	completed = bytes.TrimSuffix(completed, []byte("\n\n"))
 	responseID := "resp_chatgpt_web_" + uuid.NewString()
 	var builder strings.Builder
 	created, _ := json.Marshal(map[string]any{
@@ -157,7 +234,7 @@ func buildChatGPTWebImagesStreamBody(model string, images [][]byte) []byte {
 	builder.WriteString("event: response.created\ndata: ")
 	builder.Write(created)
 	builder.WriteString("\n\n")
-	for index, raw := range images {
+	for index, result := range results {
 		item, _ := json.Marshal(map[string]any{
 			"type":         "response.output_item.done",
 			"output_index": index,
@@ -165,7 +242,7 @@ func buildChatGPTWebImagesStreamBody(model string, images [][]byte) []byte {
 				"id":     fmt.Sprintf("ig_chatgpt_web_%d", index),
 				"type":   "image_generation_call",
 				"status": "completed",
-				"result": base64.StdEncoding.EncodeToString(raw),
+				"result": result,
 			},
 		})
 		builder.WriteString("event: response.output_item.done\ndata: ")
@@ -231,22 +308,46 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesChatGPTWeb(
 	if err != nil {
 		return nil, err
 	}
-	images, err := session.GenerateImageBatch(
-		upstreamCtx,
-		parsed.Prompt,
-		requestModel,
-		account.ChatGPTWebImageUpstreamModel(),
-		references,
-		requested,
+	upstreamPrompt := chatGPTWebPromptWithCanvasSize(parsed.Prompt, parsed.Size)
+	urlOutput := strings.EqualFold(strings.TrimSpace(parsed.ResponseFormat), "url")
+	var (
+		images       [][]byte
+		imageResults []string
 	)
+	if urlOutput {
+		imageResults, err = session.GenerateImageResultBatch(
+			upstreamCtx,
+			upstreamPrompt,
+			requestModel,
+			account.ChatGPTWebImageUpstreamModel(),
+			references,
+			requested,
+		)
+	} else {
+		images, err = session.GenerateImageBatch(
+			upstreamCtx,
+			upstreamPrompt,
+			requestModel,
+			account.ChatGPTWebImageUpstreamModel(),
+			references,
+			requested,
+		)
+	}
 	if err != nil {
 		return nil, s.handleChatGPTWebImagesFailure(upstreamCtx, c, account, err)
 	}
 
 	body := buildChatGPTWebImagesCompletedBody(requestModel, images)
+	if urlOutput {
+		body = buildChatGPTWebImagesCompletedBodyFromResults(requestModel, imageResults)
+	}
 	contentType := "application/json"
 	if parsed.Stream {
-		body = buildChatGPTWebImagesStreamBody(requestModel, images)
+		if urlOutput {
+			body = buildChatGPTWebImagesStreamBodyFromResults(requestModel, imageResults)
+		} else {
+			body = buildChatGPTWebImagesStreamBody(requestModel, images)
+		}
 		contentType = "text/event-stream"
 	}
 	resp := &http.Response{
@@ -291,7 +392,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesChatGPTWeb(
 		}
 	}
 	if imageCount <= 0 {
-		imageCount = len(images)
+		if urlOutput {
+			imageCount = len(imageResults)
+		} else {
+			imageCount = len(images)
+		}
 	}
 	return &OpenAIForwardResult{
 		RequestID:        resp.Header.Get("X-Request-Id"),

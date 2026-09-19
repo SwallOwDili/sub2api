@@ -106,7 +106,7 @@ func chatGPTWebE2EResolveToken(t *testing.T, transport *chatGPTWebE2ETransport) 
 	session := newChatGPTWebSession(transport, nil, "", chatGPTWebDevice{})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	response, err := session.doRequest(ctx, http.MethodGet, chatGPTWebBaseURL+"/api/auth/session", "/api/auth/session", nil,
+	response, err := session.doChatGPTURLRequest(ctx, http.MethodGet, chatGPTWebBaseURL+"/api/auth/session", "/api/auth/session", nil,
 		map[string]string{"Cookie": cookie, "Accept": "application/json"})
 	require.NoError(t, err)
 	body, err := readChatGPTWebBody(response)
@@ -187,13 +187,14 @@ func TestChatGPTWebE2EEditImage(t *testing.T) {
 			{FieldName: "image", FileName: "reference.png", ContentType: "image/png", Data: data},
 		},
 	}
-	references, err := session.collectReferences(ctx, parsed)
+	references, err := session.collectReferences(ctx, parsed, nil)
 	require.NoError(t, err)
 	require.Len(t, references, 1)
 	t.Logf("uploaded reference file=%s", references[0].FileID)
 
 	outcome, err := session.GenerateImage(ctx, parsed.Prompt, "gpt-image-2", "auto", references)
 	require.NoError(t, err)
+	defer session.cleanupImageConversation(ctx, outcome.ConversationID)
 	require.NotEmpty(t, outcome.Pointers)
 	t.Logf("edit conversation=%s pointers=%v", outcome.ConversationID, outcome.Pointers)
 
@@ -399,6 +400,7 @@ func TestChatGPTWebE2EGenerateImage(t *testing.T) {
 
 	outcome, err := session.GenerateImage(ctx, "a single red apple on a white table, product photo", "gpt-image-2", "auto", nil)
 	require.NoError(t, err)
+	defer session.cleanupImageConversation(ctx, outcome.ConversationID)
 	require.NotEmpty(t, outcome.ConversationID)
 	require.NotEmpty(t, outcome.Pointers)
 	t.Logf("conversation=%s pointers=%v", outcome.ConversationID, outcome.Pointers)

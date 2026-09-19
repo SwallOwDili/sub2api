@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -280,9 +281,14 @@ func buildOpenAIImagesStreamCompletedPayload(
 	payload := []byte(`{"type":"","created_at":0,"b64_json":""}`)
 	payload, _ = sjson.SetBytes(payload, "type", eventType)
 	payload, _ = sjson.SetBytes(payload, "created_at", createdAt)
-	payload, _ = sjson.SetBytes(payload, "b64_json", img.Result)
-	if strings.EqualFold(strings.TrimSpace(responseFormat), "url") {
-		payload, _ = sjson.SetBytes(payload, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+	if strings.EqualFold(strings.TrimSpace(responseFormat), "url") && isOpenAIImageResultDirectURL(strings.TrimSpace(img.Result)) {
+		payload, _ = sjson.SetBytes(payload, "url", strings.TrimSpace(img.Result))
+		payload, _ = sjson.DeleteBytes(payload, "b64_json")
+	} else {
+		payload, _ = sjson.SetBytes(payload, "b64_json", img.Result)
+		if strings.EqualFold(strings.TrimSpace(responseFormat), "url") {
+			payload, _ = sjson.SetBytes(payload, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+		}
 	}
 	if img.Background != "" {
 		payload, _ = sjson.SetBytes(payload, "background", img.Background)
@@ -1051,7 +1057,11 @@ func buildOpenAIImagesAPIResponse(
 	for _, img := range results {
 		item := []byte(`{}`)
 		if format == "url" {
-			item, _ = sjson.SetBytes(item, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+			imageURL := strings.TrimSpace(img.Result)
+			if !isOpenAIImageResultDirectURL(imageURL) {
+				imageURL = "data:" + openAIImageOutputMIMEType(img.OutputFormat) + ";base64," + img.Result
+			}
+			item, _ = sjson.SetBytes(item, "url", imageURL)
 		} else {
 			item, _ = sjson.SetBytes(item, "b64_json", img.Result)
 		}
@@ -1079,6 +1089,15 @@ func buildOpenAIImagesAPIResponse(
 		out, _ = sjson.SetRawBytes(out, "usage", usageRaw)
 	}
 	return out, nil
+}
+
+func isOpenAIImageResultDirectURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(raw))
+	return strings.HasPrefix(lower, "data:image/") && normalizeOpenAIImageBase64(raw) != ""
 }
 
 func openAIImagesStreamPrefix(parsed *OpenAIImagesRequest) string {

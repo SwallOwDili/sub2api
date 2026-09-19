@@ -13,9 +13,24 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestChatGPTWebPromptWithCanvasSize(t *testing.T) {
+	prompt := chatGPTWebPromptWithCanvasSize("draw a test chart", "2048x1152")
+	require.Contains(t, prompt, "2048×1152")
+	require.Contains(t, prompt, "横向画幅")
+	require.Contains(t, prompt, "2K 分辨率")
+	require.Equal(t, "draw a test chart", chatGPTWebPromptWithCanvasSize("draw a test chart", "auto"))
+	require.Equal(t, "draw a test chart", chatGPTWebPromptWithCanvasSize("draw a test chart", "invalid"))
+}
+
+func TestNormalizeOpenAIImageBase64RestoresRequiredPadding(t *testing.T) {
+	require.Equal(t, "aGVsbG8=", normalizeOpenAIImageBase64("aGVsbG8="))
+	require.Equal(t, "aGVsbG8=", normalizeOpenAIImageBase64("aGVsbG8"))
+}
 
 // 合成的非流式体必须能被既有 Responses 解析器当成真实上游输出读取。
 func TestBuildChatGPTWebImagesCompletedBodyIsParsedByExistingPipeline(t *testing.T) {
@@ -52,6 +67,25 @@ func TestBuildChatGPTWebImagesStreamBodyCarriesImageAndCompletion(t *testing.T) 
 	require.Equal(t, "stream-image", string(decoded))
 }
 
+func TestBuildChatGPTWebImagesStreamBodyPreservesSignedURL(t *testing.T) {
+	const signedURL = "https://fixture.example/image.png?sig=fixture"
+	body := buildChatGPTWebImagesStreamBodyFromResults("gpt-image-2", []string{signedURL})
+	results, _, _, _, _, err := collectOpenAIImagesFromResponsesBody(body)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, signedURL, results[0].Result)
+
+	payload := buildOpenAIImagesStreamCompletedPayload(
+		"image_generation.completed",
+		results[0],
+		"url",
+		0,
+		nil,
+	)
+	require.Equal(t, signedURL, gjson.GetBytes(payload, "url").String())
+	require.False(t, gjson.GetBytes(payload, "b64_json").Exists())
+}
+
 // 指针收集必须忽略用户输入附件，只接受工具产出的图片。
 func TestChatGPTWebCollectImagePointersIgnoresInputAttachments(t *testing.T) {
 	payload := map[string]any{
@@ -83,6 +117,16 @@ func TestChatGPTWebCollectImagePointersIgnoresInputAttachments(t *testing.T) {
 	}
 	chatGPTWebCollectImagePointers(payload, &conversationID, &pointers)
 	require.Equal(t, []string{"file-service://file_result"}, pointers)
+
+	payload["message"] = map[string]any{
+		"author": map[string]any{"role": "assistant"},
+		"content": map[string]any{
+			"content_type": "multimodal_text",
+			"parts":        []any{map[string]any{"asset_pointer": "file-service://assistant_result"}},
+		},
+	}
+	chatGPTWebCollectImagePointers(payload, &conversationID, &pointers)
+	require.Equal(t, []string{"file-service://file_result", "file-service://assistant_result"}, pointers)
 }
 
 type chatGPTWebNoopTransport struct{}
