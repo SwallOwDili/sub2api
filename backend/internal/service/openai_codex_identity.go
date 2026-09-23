@@ -32,18 +32,19 @@ func NormalizeCodexClientVersion(version string) string {
 	return version
 }
 
-// buildCodexCLIUserAgent 按版本号拼出规范 Codex app-server TUI User-Agent。
-// 此生成器显式构造 embedded 同版模板；不能据此推断外部 TUI UA 也必然同版。
+// buildCodexCLIUserAgent 按版本号拼出无终端 codex exec 的完整 User-Agent。
+// 前缀、originator、clientInfo.name 与 unknown 终端描述均经本机独立 CLI 实测；
+// Core 和 clientInfo.version 同取自动同步的官方 CLI 版本，不能拼接 Desktop 版本。
 func buildCodexCLIUserAgent(version string) string {
 	if version = NormalizeCodexClientVersion(version); version == "" {
 		return codexCLIUserAgent
 	}
 	return (openai.CodexWireProfile{
-		Originator:        openai.CodexTUIOriginator,
+		Originator:        "codex_exec",
 		CoreVersion:       version,
 		RuntimeDescriptor: strings.TrimSpace(codexCLIUserAgentSuffix),
 		ClientInfo: &openai.CodexClientInfo{
-			Name:    openai.CodexTUIOriginator,
+			Name:    "codex_exec",
 			Version: version,
 		},
 	}).UserAgent()

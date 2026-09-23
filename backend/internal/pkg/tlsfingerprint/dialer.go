@@ -5,6 +5,7 @@ package tlsfingerprint
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -37,7 +39,18 @@ type Profile struct {
 // PresetChrome 使用 uTLS 内置的 Chrome ClientHello（GREASE、扩展顺序、ALPS、
 // compress_certificate 等均为真实 Chrome 形态）。默认 Node.js 风格的手工指纹在
 // Cloudflare 前置站点上会被判为可疑客户端并下发 403 challenge。
-const PresetChrome = "chrome"
+const (
+	PresetChrome = "chrome"
+	// PresetCodexCLI is the model-provider TLS ClientHello observed from the
+	// standalone codex-cli 0.156.1 on macOS arm64 (not its separate auth client).
+	PresetCodexCLI = "codex-cli-0.156.1-macos-arm64"
+)
+
+// CodexCLIProfile returns a fresh, versioned transport identity. Keep this
+// separate from the Node/Claude default and from user-defined profiles.
+func CodexCLIProfile() *Profile {
+	return &Profile{Name: "Codex CLI 0.156.1 (macOS arm64)", Preset: PresetCodexCLI}
+}
 
 // Dialer creates TLS connections with custom fingerprints.
 type Dialer struct {
@@ -48,9 +61,12 @@ type Dialer struct {
 // HTTPProxyDialer creates TLS connections through HTTP/HTTPS proxies with custom fingerprints.
 // It handles the CONNECT tunnel establishment before performing TLS handshake.
 type HTTPProxyDialer struct {
-	profile  *Profile
-	proxyURL *url.URL
+	profile        *Profile
+	proxyURL       *url.URL
+	proxyTLSConfig *tls.Config // nil uses system roots; test fixtures may inject a local CA
 }
+
+const tlsFingerprintHandshakeTimeout = 10 * time.Second
 
 // SOCKS5ProxyDialer creates TLS connections through SOCKS5 proxies with custom fingerprints.
 // It uses golang.org/x/net/proxy to establish the SOCKS5 tunnel.
@@ -128,7 +144,7 @@ var (
 // If baseDialer is nil, direct TCP dial is used.
 func NewDialer(profile *Profile, baseDialer func(ctx context.Context, network, addr string) (net.Conn, error)) *Dialer {
 	if baseDialer == nil {
-		baseDialer = (&net.Dialer{}).DialContext
+		baseDialer = (&net.Dialer{Timeout: tlsFingerprintHandshakeTimeout}).DialContext
 	}
 	return &Dialer{profile: profile, baseDialer: baseDialer}
 }
@@ -204,13 +220,32 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		}
 	}
 
-	dialer := &net.Dialer{}
+	dialer := &net.Dialer{Timeout: tlsFingerprintHandshakeTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed", "error", err)
 		return nil, fmt.Errorf("connect to proxy: %w", err)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
+	if err := conn.SetDeadline(time.Now().Add(tlsFingerprintHandshakeTimeout)); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if strings.EqualFold(d.proxyURL.Scheme, "https") {
+		proxyConfig := &tls.Config{ServerName: d.proxyURL.Hostname()}
+		if d.proxyTLSConfig != nil {
+			proxyConfig = d.proxyTLSConfig.Clone()
+			if proxyConfig.ServerName == "" {
+				proxyConfig.ServerName = d.proxyURL.Hostname()
+			}
+		}
+		proxyTLS := tls.Client(conn, proxyConfig)
+		if err := proxyTLS.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("TLS handshake with HTTPS proxy: %w", err)
+		}
+		conn = proxyTLS
+	}
 
 	// Step 2: Send CONNECT request to establish tunnel
 	req := &http.Request{
@@ -254,7 +289,15 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")
 
 	// Step 4: Perform TLS handshake on the tunnel with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	upstreamConn, err := performTLSHandshake(ctx, conn, d.profile, addr)
+	if err != nil {
+		return nil, err
+	}
+	if err := upstreamConn.SetDeadline(time.Time{}); err != nil {
+		_ = upstreamConn.Close()
+		return nil, err
+	}
+	return upstreamConn, nil
 }
 
 // DialTLSContext establishes a TLS connection with the configured fingerprint.
@@ -290,7 +333,9 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		return nil, fmt.Errorf("apply TLS preset: %w", err)
 	}
 
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
+	handshakeCtx, cancel := context.WithTimeout(ctx, tlsFingerprintHandshakeTimeout)
+	defer cancel()
+	if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("TLS handshake failed: %w", err)
 	}
@@ -363,6 +408,9 @@ func buildChromePresetSpec(profile *Profile) *utls.ClientHelloSpec {
 func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 	if profile != nil && strings.EqualFold(strings.TrimSpace(profile.Preset), PresetChrome) {
 		return buildChromePresetSpec(profile)
+	}
+	if profile != nil && profile.Preset == PresetCodexCLI {
+		return buildCodexCLISpec()
 	}
 	// Resolve effective values (profile overrides or built-in defaults)
 	cipherSuites := defaultCipherSuites
@@ -483,6 +531,33 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 		Extensions:         extensions,
 		TLSVersMax:         utls.VersionTLS13,
 		TLSVersMin:         utls.VersionTLS10,
+	}
+}
+
+// buildCodexCLISpec matches the stable JA3 fields of the model-provider
+// connection captured with a standalone CLI and an isolated HTTPS endpoint.
+// TLS random/session bytes are intentionally generated afresh by uTLS.
+func buildCodexCLISpec() *utls.ClientHelloSpec {
+	return &utls.ClientHelloSpec{
+		CipherSuites: []uint16{
+			255, 49196, 49195, 49188, 49187, 49162, 49161, 49160,
+			49200, 49199, 49192, 49191, 49172, 49171, 49170,
+			157, 156, 61, 60, 53, 47, 10,
+		},
+		CompressionMethods: []uint8{0},
+		Extensions: []utls.TLSExtension{
+			&utls.SNIExtension{},
+			&utls.SupportedCurvesExtension{Curves: []utls.CurveID{23, 24, 25}},
+			&utls.SupportedPointsExtension{SupportedPoints: []uint8{0}},
+			&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: []utls.SignatureScheme{
+				0x0401, 0x0201, 0x0501, 0x0601, 0x0403, 0x0203, 0x0503, 0x0603,
+			}},
+			&utls.StatusRequestExtension{},
+			&utls.SCTExtension{},
+			&utls.ExtendedMasterSecretExtension{},
+		},
+		TLSVersMin: utls.VersionTLS12,
+		TLSVersMax: utls.VersionTLS12,
 	}
 }
 

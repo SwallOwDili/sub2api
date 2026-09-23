@@ -327,13 +327,25 @@ func TestGetOpenAICodexClientVersionFallsBackOnError(t *testing.T) {
 	require.Equal(t, codexCLIVersion, svc.GetOpenAICodexClientVersion(context.Background()))
 }
 
-// 默认 Desktop 是同一制品内的 Core/frontend 完整元组，不能被独立 CLI 同步值拆开覆盖。
-func TestGetOpenAICodexCanonicalUserAgentKeepsDefaultDesktopTuple(t *testing.T) {
+// 较新 CLI 同步值使用完整 codex exec 身份，不能拆开覆盖默认 Desktop 的 Core/frontend 元组。
+func TestGetOpenAICodexCanonicalUserAgentUsesSyncedCLITuple(t *testing.T) {
 	svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
-		SettingKeyOpenAICodexClientVersionSynced: "0.200.1",
+		SettingKeyOpenAICodexClientVersionSynced: "0.156.1",
 	}}, nil)
 
-	require.Equal(t, codexCLIUserAgent, svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
+	require.Equal(t,
+		"codex_exec/0.156.1 (Mac OS 15.6.0; arm64) unknown (codex_exec; 0.156.1)",
+		svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
+	)
+}
+
+func TestGetOpenAICodexCanonicalUserAgentFallsBackToDesktopWithoutNewerVersion(t *testing.T) {
+	for _, version := range []string{"", "0.150.0"} {
+		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+			SettingKeyOpenAICodexClientVersionSynced: version,
+		}}, nil)
+		require.Equal(t, codexCLIUserAgent, svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
+	}
 }
 
 // 回归：单版本面板 UA 只借用客户端/运行时指纹，版本段随生效版本重建；明确携带独立

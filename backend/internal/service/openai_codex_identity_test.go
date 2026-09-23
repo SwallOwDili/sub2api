@@ -20,12 +20,12 @@ func requireOpenAICodexProbeHeaders(t *testing.T, h http.Header) {
 
 func TestDefaultCodexIdentityMatchesVerifiedLocalDesktop(t *testing.T) {
 	require.Equal(t,
-		"Codex Desktop/0.153.4 (Mac OS 15.6.0; arm64) unknown (Codex Desktop; 26.901.41600)",
+		"Codex Desktop/0.155.0-alpha.9.2 (Mac OS 15.6.0; arm64) unknown (Codex Desktop; 26.915.31945)",
 		codexCLIUserAgent,
 	)
 	require.Equal(t, "Codex Desktop", openai.CodexDefaultOriginator)
-	require.Equal(t, "0.153.4", codexCLIVersion)
-	require.Equal(t, "26.901.41600", codexDesktopVersion)
+	require.Equal(t, "0.155.0-alpha.9.2", codexCLIVersion)
+	require.Equal(t, "26.915.31945", codexDesktopVersion)
 }
 
 func TestOpenAICodexGatewayOwnedIdentityHeadersAreNotCopiedFromIngress(t *testing.T) {
@@ -361,8 +361,16 @@ func TestNormalizeCodexClientVersion(t *testing.T) {
 
 func TestBuildCodexCLIUserAgent(t *testing.T) {
 	require.Equal(t,
-		openai.CodexTUIOriginator+"/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)",
+		"codex_exec/0.200.1"+codexCLIUserAgentSuffix+" (codex_exec; 0.200.1)",
 		buildCodexCLIUserAgent("0.200.1"),
+	)
+	identity, ok := codexOutboundIdentityFromUA(buildCodexCLIUserAgent("0.156.1"), "0.156.1")
+	require.True(t, ok)
+	require.Equal(t, "codex_exec", identity.originator)
+	require.Equal(t, "0.156.1", identity.version)
+	require.Equal(t,
+		"codex_exec/0.156.1 (Mac OS 15.6.0; arm64) unknown (codex_exec; 0.156.1)",
+		identity.userAgent,
 	)
 	// 非法版本号必须回退到内置 UA，不能拼出畸形身份。
 	require.Equal(t, codexCLIUserAgent, buildCodexCLIUserAgent("bogus version"))

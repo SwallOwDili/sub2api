@@ -96,17 +96,42 @@ func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredSOCKSProxy(t *testing.T) {
 	require.Equal(t, int64(1), upstreamCalls.Load())
 }
 
-func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
+func TestTLSFingerprintHTTPSProxyUsesFingerprintTunnel(t *testing.T) {
 	proxyURL, err := url.Parse("https://user:pass@proxy.example:8443")
 	require.NoError(t, err)
 	transport, err := buildUpstreamTransportWithTLSFingerprint(poolSettings{}, proxyURL, &tlsfingerprint.Profile{Name: "test"})
 	require.NoError(t, err)
-	require.NotNil(t, transport.Proxy)
-	require.Nil(t, transport.DialTLSContext)
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "upstream.example"}}
-	resolved, err := transport.Proxy(req)
+	require.Nil(t, transport.Proxy)
+	require.NotNil(t, transport.DialTLSContext)
+}
+
+func TestCodexCLITransportRequestScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, target string
+		profile      service.HTTPUpstreamProfile
+		want         bool
+	}{
+		{"codex response", "https://chatgpt.com/backend-api/codex/responses", service.HTTPUpstreamProfileOpenAI, true},
+		{"codex models", "https://chatgpt.com/backend-api/codex/models", service.HTTPUpstreamProfileOpenAI, true},
+		{"plain HTTP fixture", "http://127.0.0.1/backend-api/codex/responses", service.HTTPUpstreamProfileOpenAI, false},
+		{"unrelated API", "https://api.openai.com/v1/responses", service.HTTPUpstreamProfileOpenAI, false},
+		{"unmarked", "https://chatgpt.com/backend-api/codex/responses", service.HTTPUpstreamProfileDefault, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(service.WithHTTPUpstreamProfile(t.Context(), tc.profile), http.MethodGet, tc.target, nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, isCodexCLITransportRequest(req))
+		})
+	}
+}
+
+func TestTLSFingerprintClientCacheSeparatesProfiles(t *testing.T) {
+	upstream := NewHTTPUpstream(nil).(*httpUpstreamService)
+	first, err := upstream.getClientEntryWithTLS("", 9, 1, tlsfingerprint.CodexCLIProfile(), service.HTTPUpstreamProfileOpenAI, false, false)
 	require.NoError(t, err)
-	require.Equal(t, "https://user:pass@proxy.example:8443", resolved.String())
+	second, err := upstream.getClientEntryWithTLS("", 9, 1, &tlsfingerprint.Profile{Name: "Node"}, service.HTTPUpstreamProfileOpenAI, false, false)
+	require.NoError(t, err)
+	require.NotSame(t, first.client, second.client)
 }
 
 func startTestSOCKS5Proxy(t *testing.T) (string, *atomic.Int64) {

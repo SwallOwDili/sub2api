@@ -17,7 +17,8 @@
 | OpenAI provider 推理请求带 `version` | `openai/codex` provider 源码 | 官方 0.147.0 实现 |
 | Desktop 使用独立的 Core/Desktop 版本 | 官方 appcast/发布包、`initialize` 返回值和回环抓包 | 2026-09-11 对一个 macOS 发布制品的直接验证 |
 | Desktop 制品原子更新方案 | `zyycn/codex-proxy-rs` | 第三方参考方案，不是 OpenAI 协议合同 |
-| 默认 Desktop 完整画像 | 本机官方发布制品、`initialize` 返回值和回环抓包 | 用户指定的 2026-09-11 本机基准，不代表所有机器或最新版本 |
+| 默认 Desktop 完整画像 | 本机官方发布制品、`initialize` 返回值和回环抓包；2026-09-23 复核本机版本并做上游请求对照 | 编译期回退画像，不代表所有机器或未来版本 |
+| 默认画像随较新 CLI 同步版本切换 | 本机独立 `codex exec` 对本地探针的真实请求头；同一 ChatGPT OAuth 账号对旧 Desktop、当前 Desktop、CLI Exec 身份的上游 A/B 请求 | 2026-09-23 实测 `gpt-6-sol` 接受当前 Desktop/CLI Exec，拒绝旧 Desktop |
 
 来源：
 
@@ -236,7 +237,7 @@ Sub2API 是多用户 Web 网关，不是某位管理员本机上的 Codex 进程
 
 管理站点展示“当前生效的上游画像”，用于区分三类数据：
 
-- 输入框为空：使用代码内已核验的完整 Desktop 制品画像；
+- 输入框为空：较新的自动同步 CLI 版本使用完整无终端 `codex exec` 画像；否则使用代码内已核验的 Desktop 制品画像；
 - 单版本 CLI/TUI 模板：沿用同时重建首尾版本的配置策略，不据此宣称制品来源已验证；
 - 管理员双版本画像：包括 Desktop、VS Code、remote TUI，整体保留，不接受 CLI 版本局部覆盖。
 
@@ -244,20 +245,24 @@ Sub2API 是多用户 Web 网关，不是某位管理员本机上的 Codex 进程
 集成应通过 `clientInfo.name` 标识并申请加入已知客户端列表；Sub2API 当前实现是上游 HTTP
 兼容网关，并没有完成该注册流程，不能一边声明官方兼容身份、一边擅自拼入第三方 clientInfo。
 
-CLI 稳定版自动同步仍用于管理员明确配置的单版本 TUI/CLI UA；默认 Desktop 不读取该值，
-否则会把 Desktop 的 Core `0.153.4` 局部替换成独立 CLI 版本，而尾部仍保留
-`26.901.41600`，形成未经任何真实制品验证的组合。
+CLI 稳定版自动同步也用于未配置 UA 的默认路径：同步版本高于内置 Desktop Core 时，
+切换为完整的 `codex_exec/<version> … (codex_exec; <version>)` 身份，不会只替换 Desktop
+UA 的 Core 前缀、留下旧 frontend 版本。官方发布的 `codex-cli 0.156.1` 在去掉 Desktop
+继承的 originator 覆盖和终端变量后，请求本地探针时 `/responses` 上的 User-Agent、
+originator 和 version 三个身份头与此画像逐项一致。2026-09-23 使用同一 ChatGPT OAuth 账号实测，
+旧 Desktop Core `0.153.4` 请求 `gpt-6-sol` 被拒绝；当前 Desktop Core
+`0.155.0-alpha.9.2` 和同步 CLI Exec `0.156.1` 均被接受。
 
 ## 5. 画像处理规则
 
 | 输入 | 处理 | `version` 头 |
 |---|---|---|
-| 未配置 UA | 使用固定的本机 Desktop 完整画像 | `0.153.4` |
+| 未配置 UA | 较新同步版本使用完整 codex exec 画像，否则使用内置 Desktop 完整画像 | 最终画像的 Core 版本 |
 | 无尾部的单版本官方 UA | 保留 client/runtime，更新 Core | 当前生效 Core 版本 |
 | 首尾同版本 UA | 同时更新前缀和尾部 | 当前生效 Core 版本 |
 | 管理员显式配置的双版本完整 UA（含 remote TUI） | 格式、最低 Core 版本校验后整体保留 | UA 前缀 Core 版本 |
-| 非官方或非法画像 | 整体回退默认 Desktop | `0.153.4` |
-| 双版本画像 Core 低于最低门槛 | 整体回退默认 Desktop | `0.153.4` |
+| 非官方或非法画像 | 整体回退默认 Desktop | 内置 Desktop Core 版本 |
+| 双版本画像 Core 低于最低门槛 | 整体回退默认 Desktop | 内置 Desktop Core 版本 |
 
 OAuth 模型清单的 `client_version` 查询参数也由最终画像的 Core 版本生成；下游传入值
 不会继续穿透到 ChatGPT 上游。这样 `User-Agent` 前缀、HTTP `version` 和
@@ -343,6 +348,11 @@ User-Agent: Codex Desktop/...
 - refresh/PAT 路径只注入 UA + originator；
 - HTTP、WebSocket、compact 和探测路径回归。
 
+2026-09-23 本地服务还使用真实 OpenAI OAuth 上游完成了一次 `gpt-6-luna`
+Responses WebSocket v2 请求：收到 `response.completed`，用量日志记录
+`openai_ws_mode=true`。测试结束后已恢复该账号的 WebSocket 开关。普通 HTTP/SSE
+请求即使账号开启 WebSocket 也不会转为 WS 上游；实际验证使用 WS 入站请求。
+
 ```bash
 cd backend
 go test ./...
@@ -350,11 +360,21 @@ go test ./...
 
 ## 9. 尚未解决
 
-当前实现不声称对齐以下内容：
+已新增独立的 `codex-cli-0.156.1-macos-arm64` 模型提供者 TLS 预设。
+本机独立 CLI 对隔离 HTTPS 端点的抓包与 Sub2API 本地测试对照，JA3
+`e4d448cdfe06dc1243c1eb026c74ac9a`、扩展顺序、supported groups、point
+formats 及扩展 5/10/11/13/18/23 内容一致，且均未宣告 ALPN，使用 HTTP/1.1。
+Codex `/backend-api/codex/*` 的 HTTPS 出站请求和上游 WebSocket 使用该预设；
+HTTP、HTTPS CONNECT 与 SOCKS5 代理保留目标握手。真实 `chatgpt.com` 的 TLS
+握手和匿名 HTTP/1.1 请求已验证通过。当前预设是固定抓包快照，CLI 自动同步到新版本
+不代表新版本的 TLS 指纹也被验证。
+
+当前实现仍不声称对齐以下内容：
 
 - Desktop appcast、签名制品和内嵌 Core 的原子更新；
 - 除本机已验证制品以外的 Desktop 版本元组；
-- TLS ClientHello、HTTP/2 SETTINGS、Header 顺序；
+- TLS 随机数、会话状态等逐字节值，HTTP Header 顺序与大小写；
+- Codex 的其他内部 HTTP 客户端（例如 OAuth auth 客户端和插件客户端）的 TLS 指纹；
 - 出口 IP、ASN、代理信誉；
 - attestation；
 - OpenAI 风控结果或账号状态。

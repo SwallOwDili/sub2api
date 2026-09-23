@@ -161,7 +161,7 @@ func TestCodexIdentityRejectsInvalidDualVersionProfiles(t *testing.T) {
 
 func TestCodexIdentityPreservesIndependentFrontendTuples(t *testing.T) {
 	for _, ua := range []string{
-		codexCLIUserAgent,
+		"Codex Desktop/0.153.4 (Mac OS 15.6.0; arm64) unknown (Codex Desktop; 26.901.41600)",
 		"codex_vscode/0.153.4 (Mac OS 15.6.0; arm64) unknown (codex_vscode; 9.8.7)",
 		"Codex Desktop/0.153.4 (Mac OS 15.6.0; arm64) unknown (codex_vscode; 9.8.7)",
 		"codex-tui/0.153.4 (Mac OS 15.6.0; arm64) unknown (codex_vscode; 9.8.7)",

@@ -36,7 +36,7 @@ const (
 	// 结构按官方 Codex Desktop -> app-server 初始化链路生成的 User-Agent 对齐：
 	// {originator}/{core_version} ({OS} {OS_version}; {arch}) {terminal}
 	// ({clientInfo.name}; {clientInfo.version})
-	// Core/app/clientInfo 来自 2026-09-11 本机官方 Desktop 制品；真实 Desktop app-server
+	// Core/app/clientInfo 来自 2026-09-23 本机官方 Desktop 制品；真实 Desktop app-server
 	// 由 GUI 启动且没有终端环境，按同版官方检测逻辑得到 unknown。
 	codexCLIUserAgentSuffix = " (Mac OS 15.6.0; arm64) unknown"
 	// codexCLIUserAgent 是历史名称，现表示编译期默认 Desktop UA。Core 与 Desktop
@@ -60,9 +60,9 @@ const (
 	openAIUpstreamEndpointContextKey   = "openai_actual_upstream_endpoint"
 	// codexCLIVersion 是历史名称，现表示默认 Desktop 制品内嵌的 Core 版本，并用于
 	// 推理面的 version 头。它必须与 codexDesktopVersion 原子更新。
-	codexCLIVersion = "0.153.4"
+	codexCLIVersion = "0.155.0-alpha.9.2"
 	// codexDesktopVersion 是同一默认 Desktop 制品的 frontend/app 版本。
-	codexDesktopVersion = "26.901.41600"
+	codexDesktopVersion = "26.915.31945"
 	// Codex 限额快照仅用于后台展示/诊断，不需要每个成功请求都立即落库。
 	openAICodexSnapshotPersistMinInterval = 30 * time.Second
 	// 配额自动暂停时，超过该时长仍未刷新的 used% 快照视为陈旧，不再据此暂停账号。

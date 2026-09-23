@@ -111,6 +111,19 @@ func TestCoderOpenAIWSClientDialer_ProxyTransportTLSHandshakeTimeout(t *testing.
 	require.Equal(t, 10*time.Second, transport.TLSHandshakeTimeout)
 }
 
+func TestCoderOpenAIWSClientDialer_CodexTLSForDirectAndHTTPSProxy(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	for _, proxy := range []string{"", "https://proxy.example:8443"} {
+		client, err := dialer.proxyHTTPClient(proxy)
+		require.NoError(t, err)
+		transport, ok := client.Transport.(*http.Transport)
+		require.True(t, ok)
+		require.NotNil(t, transport.DialTLSContext)
+		require.Nil(t, transport.Proxy)
+		require.False(t, transport.ForceAttemptHTTP2)
+	}
+}
+
 func TestCoderOpenAIWSClientConn_DoesNotSupportIdlePingWithoutReader(t *testing.T) {
 	require.False(t, (&coderOpenAIWSClientConn{}).SupportsIdlePingWithoutReader())
 }
