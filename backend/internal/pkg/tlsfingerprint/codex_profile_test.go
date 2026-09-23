@@ -28,7 +28,7 @@ func TestCodexCLIClientHelloJA3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	type helloResult struct {
 		ja3 string
 		ext map[uint16]string
@@ -40,7 +40,7 @@ func TestCodexCLIClientHelloJA3(t *testing.T) {
 			result <- helloResult{ja3: err.Error()}
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		header := make([]byte, 5)
 		if _, err := io.ReadFull(conn, header); err != nil {
@@ -104,7 +104,7 @@ func TestCodexCLIProfileLiveHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.ProtoMajor != 1 || resp.StatusCode == 0 {
 		t.Fatalf("unexpected upstream protocol/status: %s %d", resp.Proto, resp.StatusCode)
 	}
@@ -128,7 +128,7 @@ func TestCodexCLIClientHelloThroughHTTPSProxy(t *testing.T) {
 			seen <- err.Error()
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_, _ = conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		header := make([]byte, 5)

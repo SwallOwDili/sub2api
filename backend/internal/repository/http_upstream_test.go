@@ -126,7 +126,8 @@ func TestCodexCLITransportRequestScope(t *testing.T) {
 }
 
 func TestTLSFingerprintClientCacheSeparatesProfiles(t *testing.T) {
-	upstream := NewHTTPUpstream(nil).(*httpUpstreamService)
+	upstream, ok := NewHTTPUpstream(nil).(*httpUpstreamService)
+	require.True(t, ok)
 	first, err := upstream.getClientEntryWithTLS("", 9, 1, tlsfingerprint.CodexCLIProfile(), service.HTTPUpstreamProfileOpenAI, false, false)
 	require.NoError(t, err)
 	second, err := upstream.getClientEntryWithTLS("", 9, 1, &tlsfingerprint.Profile{Name: "Node"}, service.HTTPUpstreamProfileOpenAI, false, false)

@@ -112,7 +112,8 @@ func TestCoderOpenAIWSClientDialer_ProxyTransportTLSHandshakeTimeout(t *testing.
 }
 
 func TestCoderOpenAIWSClientDialer_CodexTLSForDirectAndHTTPSProxy(t *testing.T) {
-	dialer := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	dialer, ok := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
 	for _, proxy := range []string{"", "https://proxy.example:8443"} {
 		client, err := dialer.proxyHTTPClient(proxy)
 		require.NoError(t, err)
