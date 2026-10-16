@@ -46,7 +46,7 @@ func validateOpenAIImageChannel(a *Account) error {
 
 // The same option contract is used by scheduling and the final forwarding guard.
 func supportsOpenAINativeImageOptions(parsed *OpenAIImagesRequest) bool {
-	return parsed != nil && !(parsed.N > 1 || parsed.HasMask || parsed.MaskUpload != nil || parsed.MaskImageURL != "" || parsed.PartialImages != nil || parsed.OutputCompression != nil || (parsed.OutputFormat != "" && parsed.OutputFormat != "png") || parsed.Moderation != "" || parsed.InputFidelity != "" || parsed.Style != "")
+	return parsed != nil && parsed.N <= 1 && !parsed.HasMask && parsed.MaskUpload == nil && parsed.MaskImageURL == "" && parsed.PartialImages == nil && parsed.OutputCompression == nil && (parsed.OutputFormat == "" || parsed.OutputFormat == "png") && parsed.Moderation == "" && parsed.InputFidelity == "" && parsed.Style == ""
 }
 
 type nativeImageOptionsContextKey struct{}
@@ -207,7 +207,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesNative(ctx context.Context, c 
 	if err != nil {
 		return nil, fmt.Errorf("native Images request failed: %s", sanitizeUpstreamErrorMessage(err.Error()))
 	}
-	defer resp.Body.Close()
+	defer func(body io.ReadCloser) { _ = body.Close() }(resp.Body)
 	if resp.StatusCode >= 400 {
 		body := s.readUpstreamErrorBody(resp)
 		resp.Body = io.NopCloser(bytes.NewReader(body))
@@ -300,7 +300,7 @@ func (s *AccountTestService) testOpenAIImageNative(c *gin.Context, ctx context.C
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Native-Image request failed")
 	}
-	defer resp.Body.Close()
+	defer func(body io.ReadCloser) { _ = body.Close() }(resp.Body)
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Native-Image HTTP %d: %s", resp.StatusCode, sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(body))))
