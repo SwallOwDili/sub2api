@@ -1796,7 +1796,7 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	// ChatGPT 网页账号只服务图片端点（图片请求不声明 endpoint capability）。
 	// 若放行 chat/responses，它会被文本流量打到 429，从而把网页生图额度一起锁死。
-	if a.Type == AccountTypeWebImage || a.Type == accountTypeWebImageLegacy {
+	if a.Type == AccountTypeWebImage || a.Type == accountTypeWebImageLegacy || a.UsesOpenAINativeImageChannel() {
 		return false
 	}
 	if !a.IsOpenAICompatible() {

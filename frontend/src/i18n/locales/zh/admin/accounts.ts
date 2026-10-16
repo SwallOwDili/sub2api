@@ -361,6 +361,9 @@ export default {
       types: {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
+        nativeImage: 'ChatGPT 订阅原生生图',
+        imageChannel: '图片通道',
+        nativeImageHint: '直接使用 Codex Images，省去 Responses 编排。仅承载图片请求；支持单张 PNG 和无蒙版编辑。quality、size 会传给上游，实际档位与尺寸以上游结果为准。',
         chatgptWeb: 'ChatGPT 网页（生图专用）',
         responsesApi: 'Responses API',
         googleOauth: 'Google OAuth',

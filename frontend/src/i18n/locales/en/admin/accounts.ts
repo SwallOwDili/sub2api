@@ -158,6 +158,9 @@ export default {
       types: {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
+        nativeImage: 'Native images with ChatGPT subscription',
+        imageChannel: 'Image channel',
+        nativeImageHint: 'Uses Codex Images directly without Responses orchestration. Images only: one PNG per request, with maskless edits. Quality and size are forwarded; the upstream determines the actual output.',
         chatgptWeb: 'ChatGPT Web (images only)',
         responsesApi: 'Responses API',
         googleOauth: 'Google OAuth',

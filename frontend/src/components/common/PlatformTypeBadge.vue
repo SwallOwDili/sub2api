@@ -80,6 +80,7 @@ const { t } = useI18n()
 interface Props {
   platform: AccountPlatform
   type: AccountType
+  imageChannel?: string
   authMode?: string
   planType?: string
   privacyMode?: string
@@ -96,6 +97,7 @@ const normalizedAuthMode = computed(() =>
 
 const typeLabel = computed(() => {
   if (props.platform === 'openai' && props.type === 'oauth') {
+    if (props.imageChannel === 'native') return 'Native-Image'
     if (normalizedAuthMode.value === 'agentidentity') return 'Agent Identity'
     if (normalizedAuthMode.value === 'personalaccesstoken') return 'PAT'
   }

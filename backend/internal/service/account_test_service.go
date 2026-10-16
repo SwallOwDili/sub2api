@@ -223,6 +223,15 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 			}
 		}
 	}
+	if account != nil && account.UsesOpenAINativeImageChannel() {
+		images := make([]openai.Model, 0)
+		for _, model := range payload.Data {
+			if IsGPTImageGenerationModel(model.ID) {
+				images = append(images, model)
+			}
+		}
+		return images, nil
+	}
 	return payload.Data, nil
 }
 
@@ -712,11 +721,18 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = openai.DefaultTestModel
 	}
 
+	if account.UsesOpenAINativeImageChannel() && strings.TrimSpace(modelID) == "" {
+		testModelID = "gpt-image-2"
+	}
+
 	// Align test routing with gateway behavior: OpenAI accounts apply normal
 	// account model mapping. Native remote compaction v2 rides the ordinary
 	// /responses wire and does NOT apply the legacy compact-only mapping
 	// (post-#5641 semantics: compact_model_mapping is /responses/compact-only).
 	testModelID = account.GetMappedModel(testModelID)
+	if account.UsesOpenAINativeImageChannel() && (mode == AccountTestModeCompact || !isOpenAIImageModel(testModelID)) {
+		return s.sendErrorAndEnd(c, "Native-Image only supports image generation tests")
+	}
 	if mode == AccountTestModeCompact {
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
@@ -729,6 +745,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 		if account.Type == "apikey" {
 			return s.testOpenAIImageAPIKey(c, ctx, account, testModelID, imagePrompt)
+		}
+		if account.UsesOpenAINativeImageChannel() {
+			return s.testOpenAIImageNative(c, ctx, account, testModelID, imagePrompt)
 		}
 		// 网页生图通道账号（web 类型 / 开了 extra 开关的 OAuth）走网页链路测试，
 		// 否则测试会拿网页账号去打 Codex /responses，测的是另一份额度。

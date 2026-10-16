@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -32,18 +34,14 @@ import (
 // -> files/{id}/download 取下载地址 -> 下载图片字节。
 
 const (
-	chatGPTWebBaseURL                  = "https://chatgpt.com"
-	chatGPTWebImageHint                = "picture_v2"
-	chatGPTWebDefaultUpstreamModel     = "auto"
-	chatGPTWebDefaultClientVersion     = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
-	chatGPTWebDefaultClientBuildNumber = "6708908"
-	chatGPTWebDefaultUserAgent         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-		"(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
-	chatGPTWebDefaultSecChUA         = `"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"`
-	chatGPTWebDefaultSecChUAPlatform = `"Windows"`
-	chatGPTWebPollInterval           = 2 * time.Second
-	chatGPTWebPollTimeout            = 120 * time.Second
-	chatGPTWebDownloadRetry          = 8
+	chatGPTWebBaseURL              = "https://chatgpt.com"
+	chatGPTWebImageHint            = "picture_v2"
+	chatGPTWebDefaultUpstreamModel = "auto"
+	chatGPTWebDefaultUserAgent     = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	chatGPTWebPollInterval  = 2 * time.Second
+	chatGPTWebPollTimeout   = 300 * time.Second
+	chatGPTWebDownloadRetry = 8
 )
 
 type chatGPTWebDevice struct {
@@ -66,19 +64,21 @@ func (d chatGPTWebDevice) withDefaults() chatGPTWebDevice {
 }
 
 type chatGPTWebSentinel struct {
-	Token      string
-	ProofToken string
-	SOToken    string
+	Token          string
+	ProofToken     string
+	SOToken        string
+	TurnstileToken string
 }
 
 type chatGPTWebSession struct {
-	transport   HTTPUpstream
-	accountID   int64
-	concurrency int
-	proxyURL    string
-	baseURL     string
-	accessToken string
-	device      chatGPTWebDevice
+	transport        HTTPUpstream
+	accountID        int64
+	concurrency      int
+	proxyURL         string
+	baseURL          string
+	accessToken      string
+	chatGPTAccountID string
+	device           chatGPTWebDevice
 	// tlsProfile 非空时启用 TLS 指纹伪装。chatgpt.com 前置 Cloudflare 会对非常规
 	// TLS 指纹直接下发 403 challenge，普通 Go 客户端拿不到 backend-api。
 	tlsProfile *tlsfingerprint.Profile
@@ -118,47 +118,70 @@ func newChatGPTWebSession(
 	if account != nil {
 		session.accountID = account.ID
 		session.concurrency = account.Concurrency
+		session.chatGPTAccountID = account.GetCredential("chatgpt_account_id")
 	}
 	return session
 }
 
 func (s *chatGPTWebSession) do(req *http.Request) (*http.Response, error) {
+	var response *http.Response
+	var err error
 	if s.tlsProfile != nil {
-		return s.transport.DoWithTLS(req, s.proxyURL, s.accountID, s.concurrency, s.tlsProfile)
+		response, err = s.transport.DoWithTLS(req, s.proxyURL, s.accountID, s.concurrency, s.tlsProfile)
+	} else {
+		response, err = s.transport.Do(req, s.proxyURL, s.accountID, s.concurrency)
 	}
-	return s.transport.Do(req, s.proxyURL, s.accountID, s.concurrency)
+	if req.URL.Path == "/backend-api/f/conversation" || req.URL.Path == "/backend-api/f/conversation/resume" {
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		logger.LegacyPrintf("service.openai_gateway", "[ChatGPTWebImage] account_id=%d upstream_method=%s upstream_host=%s upstream_path=%s status=%d", s.accountID, req.Method, req.URL.Hostname(), req.URL.EscapedPath(), status)
+	}
+	return response, err
 }
 
 func (s *chatGPTWebSession) defaultHeaders() map[string]string {
+	major, platform := "136", `"macOS"`
+	if match := chatGPTWebChromeVersion.FindStringSubmatch(s.device.UserAgent); len(match) > 1 {
+		major = match[1]
+	}
+	if strings.Contains(s.device.UserAgent, "Windows") {
+		platform = `"Windows"`
+	} else if strings.Contains(s.device.UserAgent, "Linux") {
+		platform = `"Linux"`
+	}
 	headers := map[string]string{
 		"User-Agent":                 s.device.UserAgent,
 		"Origin":                     s.baseURL,
 		"Referer":                    s.baseURL + "/",
-		"Accept-Language":            "zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7",
+		"Accept-Language":            "en-US,en;q=0.9",
 		"Cache-Control":              "no-cache",
 		"Pragma":                     "no-cache",
 		"Priority":                   "u=1, i",
-		"Sec-Ch-Ua":                  chatGPTWebDefaultSecChUA,
-		"Sec-Ch-Ua-Arch":             `"x86"`,
-		"Sec-Ch-Ua-Bitness":          `"64"`,
+		"Sec-Ch-Ua":                  fmt.Sprintf(`"Chromium";v="%s", "Google Chrome";v="%s", "Not=A?Brand";v="24"`, major, major),
 		"Sec-Ch-Ua-Mobile":           "?0",
-		"Sec-Ch-Ua-Model":            `""`,
-		"Sec-Ch-Ua-Platform":         chatGPTWebDefaultSecChUAPlatform,
-		"Sec-Ch-Ua-Platform-Version": `"19.0.0"`,
+		"Sec-Ch-Ua-Platform":         platform,
 		"Sec-Fetch-Dest":             "empty",
 		"Sec-Fetch-Mode":             "cors",
 		"Sec-Fetch-Site":             "same-origin",
-		"OAI-Device-Id":              s.device.DeviceID,
-		"OAI-Session-Id":             s.device.SessionID,
-		"OAI-Language":               "zh-CN",
-		"OAI-Client-Version":         chatGPTWebDefaultClientVersion,
-		"OAI-Client-Build-Number":    chatGPTWebDefaultClientBuildNumber,
+		"oai-did":                    s.device.DeviceID,
+		"OAI-Language":               "en-US",
+		"originator":                 "Codex Browser",
+		"x-openai-web-frontend":      "codex_webview",
+		"x-oai-mcp-form-version":     "2",
+		"x-openai-codex-window-type": "browser",
+	}
+	if s.chatGPTAccountID != "" {
+		headers["ChatGPT-Account-ID"] = s.chatGPTAccountID
 	}
 	if token := strings.TrimSpace(s.accessToken); token != "" {
 		headers["Authorization"] = "Bearer " + token
 	}
 	return headers
 }
+
+var chatGPTWebChromeVersion = regexp.MustCompile(`(?:Chrome|Chromium)/(\d+)\.`)
 
 func (s *chatGPTWebSession) doJSON(
 	ctx context.Context,
@@ -202,10 +225,7 @@ func (s *chatGPTWebSession) doChatGPTURLRequest(
 		return nil, fmt.Errorf("chatgpt web request target is not first-party")
 	}
 	headers := s.defaultHeaders()
-	if path != "" {
-		headers["X-OpenAI-Target-Path"] = path
-		headers["X-OpenAI-Target-Route"] = path
-	}
+
 	for key, value := range extraHeaders {
 		headers[key] = value
 	}
@@ -311,14 +331,18 @@ func (s *chatGPTWebSession) fetchSentinel(ctx context.Context) (*chatGPTWebSenti
 		}
 	}
 
-	// Turnstile 不实现：当前 dx 的指令表已换成动态槽位形式，公开参考实现（chatgpt2api
-	// utils/turnstile.py）对同一份真实样本同样产出空 token。实测 finalize 不携带
-	// OpenAI-Sentinel-Turnstile-Token 仍会签发 sentinel token，因此这里不尝试解算，
-	// 也不为此引入浏览器或打码依赖。
+	turnstileToken := ""
+	if gjson.GetBytes(prepareBody, "turnstile.required").Bool() {
+		turnstileToken, err = s.solveTurnstile(ctx, gjson.GetBytes(prepareBody, "turnstile.dx").String(), requirementsToken, scriptSources, dataBuild)
+		if err != nil {
+			return nil, err
+		}
+	}
 	finalizePath := "/backend-api/sentinel/chat-requirements/finalize"
 	finalizeResp, err := s.doJSON(ctx, http.MethodPost, finalizePath, map[string]any{
 		"prepare_token": gjson.GetBytes(prepareBody, "prepare_token").String(),
-		"proof_token":   proofToken,
+		"proofofwork":   proofToken,
+		"turnstile":     turnstileToken,
 	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("chatgpt web sentinel finalize: %w", err)
@@ -332,9 +356,10 @@ func (s *chatGPTWebSession) fetchSentinel(ctx context.Context) (*chatGPTWebSenti
 		return nil, fmt.Errorf("chatgpt web sentinel returned empty token")
 	}
 	return &chatGPTWebSentinel{
-		Token:      token,
-		ProofToken: proofToken,
-		SOToken:    strings.TrimSpace(gjson.GetBytes(finalizeBody, "so_token").String()),
+		Token:          token,
+		ProofToken:     proofToken,
+		SOToken:        strings.TrimSpace(gjson.GetBytes(finalizeBody, "so_token").String()),
+		TurnstileToken: turnstileToken,
 	}, nil
 }
 
@@ -442,16 +467,16 @@ func truncateChatGPTWebText(text string, limit int) string {
 }
 
 func (s *chatGPTWebSession) sentinelHeaders(path string, sentinel *chatGPTWebSentinel, extra map[string]string) map[string]string {
-	headers := map[string]string{
-		"X-OpenAI-Target-Path":  path,
-		"X-OpenAI-Target-Route": path,
-	}
+	headers := map[string]string{}
 	if sentinel != nil {
 		if sentinel.Token != "" {
 			headers["OpenAI-Sentinel-Chat-Requirements-Token"] = sentinel.Token
 		}
 		if sentinel.ProofToken != "" {
 			headers["OpenAI-Sentinel-Proof-Token"] = sentinel.ProofToken
+		}
+		if sentinel.TurnstileToken != "" {
+			headers["OpenAI-Sentinel-Turnstile-Token"] = sentinel.TurnstileToken
 		}
 		if sentinel.SOToken != "" {
 			headers["OpenAI-Sentinel-SO-Token"] = sentinel.SOToken
@@ -671,7 +696,7 @@ func (s *chatGPTWebSession) uploadImage(
 		return nil, fmt.Errorf("chatgpt web image upload: %w", err)
 	}
 	if _, err := readChatGPTWebBody(putResponse); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("chatgpt web signed upload failed: %v", err)
 	}
 
 	confirmPath := "/backend-api/files/" + fileID + "/uploaded"
@@ -692,109 +717,96 @@ func (s *chatGPTWebSession) uploadImage(
 	}, nil
 }
 
-func (s *chatGPTWebSession) prepareImageConversation(
-	ctx context.Context,
-	prompt string,
-	sentinel *chatGPTWebSentinel,
-	upstreamModel string,
-	references []*chatGPTWebReference,
-) (string, error) {
-	// Image generations must not create persistent ChatGPT sidebar conversations.
-	path := "/backend-api/f/conversation/prepare"
-	partialContent := map[string]any{"content_type": "text", "parts": []any{prompt}}
-	if len(references) > 0 {
-		partialContent = chatGPTWebMultimodalContent(prompt, references)
+// A turn owns the parent context shared by prepare and the actual submission.
+// It is local to GenerateImage so concurrent generations never overwrite it.
+type chatGPTWebImageTurn struct {
+	ParentID string
+	TraceID  string
+}
+
+func chatGPTWebClientContext() map[string]any {
+	return map[string]any{"app_name": "chatgpt.com", "app_surface": "codex_browser"}
+}
+
+func (s *chatGPTWebSession) imageConversationModel(ctx context.Context, requested string) (string, error) {
+	if requested != "" && requested != "auto" {
+		return requested, nil
 	}
-	payload := map[string]any{
-		"action":                "next",
-		"fork_from_shared_post": false,
-		"parent_message_id":     uuid.NewString(),
-		"model":                 upstreamModel,
-		"client_prepare_state":  "success",
-		"timezone_offset_min":   -480,
-		"timezone":              "Asia/Shanghai",
-		"conversation_mode":     map[string]any{"kind": "primary_assistant"},
-		"system_hints":          []string{chatGPTWebImageHint},
-		"partial_query": map[string]any{
-			"id":      uuid.NewString(),
-			"author":  map[string]any{"role": "user"},
-			"content": partialContent,
-		},
-		"supports_buffering":       true,
-		"supported_encodings":      []string{"v1"},
-		"client_contextual_info":   map[string]any{"app_name": "chatgpt.com"},
-		"enable_message_followups": true,
-	}
-	response, err := s.doJSON(ctx, http.MethodPost, path, payload, s.sentinelHeaders(path, sentinel, nil))
-	if err != nil {
-		return "", fmt.Errorf("chatgpt web image prepare: %w", err)
-	}
-	body, err := readChatGPTWebBody(response)
+	response, err := s.doJSON(ctx, http.MethodPost, "/backend-api/conversation/init", map[string]any{
+		"conversation_id": nil, "gizmo_id": nil, "requested_default_model": nil,
+		"timezone": chatGPTWebBrowserLocation.String(), "timezone_offset_min": chatGPTWebTimezoneOffset(time.Now()),
+	}, nil)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(gjson.GetBytes(body, "conduit_token").String()), nil
+	raw, err := readChatGPTWebBody(response)
+	if err != nil {
+		return "", err
+	}
+	model := strings.TrimSpace(gjson.GetBytes(raw, "default_model_slug").String())
+	if model == "" {
+		return "", fmt.Errorf("chatgpt web conversation init returned no default model")
+	}
+	return model, nil
+}
+
+func (s *chatGPTWebSession) prepareImageConversation(
+	ctx context.Context, prompt string, sentinel *chatGPTWebSentinel, upstreamModel string,
+	references []*chatGPTWebReference, turn chatGPTWebImageTurn,
+) (string, error) {
+	path := "/backend-api/f/conversation/prepare"
+	content := map[string]any{"content_type": "text", "parts": []any{prompt}}
+	if len(references) > 0 {
+		content = chatGPTWebMultimodalContent(prompt, references)
+	}
+	payload := map[string]any{
+		"action": "next", "parent_message_id": turn.ParentID, "model": upstreamModel,
+		"is_do_not_remember": false, "client_prepare_state": "sent",
+		"client_prepare_dispatch": "immediate", "client_prepare_source": "context_change",
+		"timezone_offset_min": chatGPTWebTimezoneOffset(time.Now()), "timezone": chatGPTWebBrowserLocation.String(),
+		"partial_query":       map[string]any{"id": uuid.NewString(), "author": map[string]any{"role": "user"}, "content": content},
+		"supported_encodings": []string{"v1"}, "client_contextual_info": chatGPTWebClientContext(),
+	}
+	response, err := s.doJSON(ctx, http.MethodPost, path, payload, map[string]string{"X-Oai-Turn-Trace-Id": turn.TraceID})
+	if err != nil {
+		return "", fmt.Errorf("chatgpt web image prepare: %w", err)
+	}
+	raw, err := readChatGPTWebBody(response)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(gjson.GetBytes(raw, "conduit_token").String()), nil
 }
 
 func (s *chatGPTWebSession) startImageGeneration(
-	ctx context.Context,
-	prompt string,
-	sentinel *chatGPTWebSentinel,
-	conduitToken string,
-	upstreamModel string,
-	references []*chatGPTWebReference,
+	ctx context.Context, prompt string, sentinel *chatGPTWebSentinel, conduitToken string,
+	upstreamModel string, references []*chatGPTWebReference, turn chatGPTWebImageTurn,
 ) (*http.Response, error) {
 	path := "/backend-api/f/conversation"
-	messageContent := map[string]any{"content_type": "text", "parts": []any{prompt}}
-	messagesMetadata := map[string]any{
-		"developer_mode_connector_ids": []any{},
-		"selected_github_repos":        []any{},
-		"selected_all_github_repos":    false,
-		"system_hints":                 []string{chatGPTWebImageHint},
-		"serialization_metadata":       map[string]any{"custom_symbol_offsets": []any{}},
-	}
+	content := map[string]any{"content_type": "text", "parts": []any{prompt}}
+	metadata := map[string]any{}
 	if len(references) > 0 {
-		messageContent = chatGPTWebMultimodalContent(prompt, references)
-		messagesMetadata["attachments"] = chatGPTWebAttachmentMetadata(references)
+		content = chatGPTWebMultimodalContent(prompt, references)
+		metadata["attachments"] = chatGPTWebAttachmentMetadata(references)
+	}
+	state := "none"
+	if conduitToken != "" {
+		state = "success"
 	}
 	payload := map[string]any{
-		"action": "next",
-		"messages": []any{
-			map[string]any{
-				"id":          uuid.NewString(),
-				"author":      map[string]any{"role": "user"},
-				"create_time": float64(time.Now().UnixNano()) / 1e9,
-				"content":     messageContent,
-				"metadata":    messagesMetadata,
-			},
-		},
-		"parent_message_id":                    uuid.NewString(),
-		"model":                                upstreamModel,
-		"client_prepare_state":                 "sent",
-		"timezone_offset_min":                  -480,
-		"timezone":                             "Asia/Shanghai",
-		"conversation_mode":                    map[string]any{"kind": "primary_assistant"},
-		"enable_message_followups":             true,
-		"system_hints":                         []string{chatGPTWebImageHint},
-		"supports_buffering":                   true,
-		"supported_encodings":                  []string{"v1"},
-		"paragen_cot_summary_display_override": "allow",
-		"force_parallel_switch":                "auto",
-		"client_contextual_info": map[string]any{
-			"is_dark_mode":      false,
-			"time_since_loaded": 1200,
-			"page_height":       1072,
-			"page_width":        1724,
-			"pixel_ratio":       1.2,
-			"screen_height":     1440,
-			"screen_width":      2560,
-			"app_name":          "chatgpt.com",
-		},
+		"action": "next", "parent_message_id": turn.ParentID, "model": upstreamModel,
+		"is_do_not_remember": false, "client_prepare_state": state,
+		"timezone_offset_min": chatGPTWebTimezoneOffset(time.Now()), "timezone": chatGPTWebBrowserLocation.String(),
+		"supported_encodings": []string{"v1"}, "client_contextual_info": chatGPTWebClientContext(),
+		"turn_attribution": map[string]any{"turn_trigger": "composer"}, "genui_state_snapshots": []any{},
+		"messages": []any{map[string]any{
+			"id": uuid.NewString(), "author": map[string]any{"role": "user", "name": nil, "metadata": map[string]any{}},
+			"create_time": float64(time.Now().UnixMilli()) / 1000, "update_time": nil, "content": content,
+			"metadata": metadata, "recipient": "all", "status": "finished_successfully", "weight": 1,
+			"channel": nil, "end_turn": nil,
+		}},
 	}
-	extra := map[string]string{
-		"Accept":              "text/event-stream",
-		"X-Oai-Turn-Trace-Id": uuid.NewString(),
-	}
+	extra := map[string]string{"Accept": "text/event-stream", "X-Oai-Turn-Trace-Id": turn.TraceID}
 	if conduitToken != "" {
 		extra["X-Conduit-Token"] = conduitToken
 	}
@@ -813,6 +825,9 @@ func (s *chatGPTWebSession) startImageGeneration(
 type chatGPTWebImageOutcome struct {
 	ConversationID string
 	Pointers       []string
+	resumeToken    string
+	resumeKind     string
+	handoff        bool
 }
 
 // collectImagePointers 只接受工具或助手输出消息里的图片指针：
@@ -899,12 +914,24 @@ func chatGPTWebConsumeImageStream(reader io.Reader, outcome *chatGPTWebImageOutc
 			continue
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
+		if payload == "[DONE]" {
+			break
+		}
+		if payload == "" {
 			continue
 		}
 		var decoded any
 		if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
 			continue
+		}
+		if event, ok := decoded.(map[string]any); ok {
+			switch event["type"] {
+			case "resume_conversation_token":
+				outcome.resumeToken, _ = event["token"].(string)
+				outcome.resumeKind, _ = event["kind"].(string)
+			case "stream_handoff":
+				outcome.handoff = true
+			}
 		}
 		chatGPTWebCollectImagePointers(decoded, &outcome.ConversationID, &outcome.Pointers)
 	}
@@ -920,20 +947,45 @@ func (s *chatGPTWebSession) fetchConversationImages(
 	if strings.TrimSpace(conversationID) == "" {
 		return fmt.Errorf("chatgpt web image task is missing conversation id")
 	}
+	ctx, cancel := context.WithTimeout(ctx, chatGPTWebPollTimeout)
+	defer cancel()
 	deadline := time.Now().Add(chatGPTWebPollTimeout)
+	transientFailures := 0
 	for {
-		path := "/backend-api/conversation/" + conversationID
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		path := "/backend-api/conversations/" + url.PathEscape(conversationID) + "?num_turns=10&include_has_versions=true"
 		response, err := s.doJSON(ctx, http.MethodGet, path, nil, map[string]string{"Accept": "application/json"})
 		if err == nil {
-			if body, bodyErr := readChatGPTWebBody(response); bodyErr == nil {
+			var body []byte
+			body, err = readChatGPTWebBody(response)
+			if err == nil {
 				var decoded any
-				if json.Unmarshal(body, &decoded) == nil {
-					chatGPTWebCollectImagePointers(decoded, &outcome.ConversationID, &outcome.Pointers)
-					if len(outcome.Pointers) > 0 {
-						return nil
-					}
+				if err = json.Unmarshal(body, &decoded); err != nil {
+					return fmt.Errorf("decode chatgpt web conversation: %w", err)
+				}
+				chatGPTWebCollectImagePointers(decoded, &outcome.ConversationID, &outcome.Pointers)
+				if len(outcome.Pointers) > 0 {
+					return nil
 				}
 			}
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			var upstreamErr *chatGPTWebUpstreamError
+			// Retry transient failures on the existing conversation, never resubmit a turn.
+			if errors.As(err, &upstreamErr) && (upstreamErr.Challenge || upstreamErr.StatusCode < 500) {
+				return err
+			}
+			transientFailures++
+			if transientFailures >= 3 {
+				return err
+			}
+		} else {
+			transientFailures = 0
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("chatgpt web image task timed out after %s", chatGPTWebPollTimeout)
@@ -996,7 +1048,10 @@ func (s *chatGPTWebSession) resolvePointerDownloadURL(
 	path := ""
 	switch {
 	case strings.HasPrefix(pointer, "file-service://"):
-		path = "/backend-api/files/" + strings.TrimPrefix(pointer, "file-service://") + "/download"
+		path = "/backend-api/files/download/" + url.PathEscape(strings.TrimPrefix(pointer, "file-service://"))
+		if strings.TrimSpace(conversationID) != "" {
+			path += "?conversation_id=" + url.QueryEscape(conversationID)
+		}
 	case strings.HasPrefix(pointer, "sediment://"):
 		if strings.TrimSpace(conversationID) == "" {
 			return "", fmt.Errorf("sediment pointer requires conversation id")
@@ -1278,12 +1333,16 @@ func (s *chatGPTWebSession) GenerateImage(
 	if err != nil {
 		return nil, err
 	}
-	model := chatGPTWebImageModelSettings(requestModel, upstreamModel)
-	conduitToken, err := s.prepareImageConversation(ctx, prompt, sentinel, model, references)
+	model, err := s.imageConversationModel(ctx, chatGPTWebImageModelSettings(requestModel, upstreamModel))
 	if err != nil {
 		return nil, err
 	}
-	response, err := s.startImageGeneration(ctx, prompt, sentinel, conduitToken, model, references)
+	turn := chatGPTWebImageTurn{ParentID: "client-created-root", TraceID: uuid.NewString()}
+	conduitToken, err := s.prepareImageConversation(ctx, prompt, sentinel, model, references, turn)
+	if err != nil {
+		return nil, err
+	}
+	response, err := s.startImageGeneration(ctx, prompt, sentinel, conduitToken, model, references, turn)
 	if err != nil {
 		return nil, err
 	}
@@ -1293,6 +1352,33 @@ func (s *chatGPTWebSession) GenerateImage(
 	if streamErr != nil && len(outcome.Pointers) == 0 {
 		s.scheduleImageConversationCleanup(ctx, outcome.ConversationID)
 		return nil, streamErr
+	}
+	// A stream handoff is not the end of generation. Follow the offered SSE
+	// resume before falling back to conversation polling; never submit a new turn.
+	for attempt := 0; attempt < 2 && len(outcome.Pointers) == 0 && outcome.handoff && outcome.resumeToken != "" && outcome.ConversationID != ""; attempt++ {
+		kind := outcome.resumeKind
+		if kind == "" {
+			kind = "topic"
+		}
+		body := map[string]any{"conversation_id": outcome.ConversationID, "kind": kind, "token": outcome.resumeToken}
+		outcome.resumeToken = ""
+		outcome.handoff = false
+		path := "/backend-api/f/conversation/resume"
+		resumed, resumeErr := s.doJSON(ctx, http.MethodPost, path, body, s.sentinelHeaders(path, sentinel, map[string]string{
+			"Accept": "text/event-stream", "X-Conduit-Token": conduitToken, "X-Oai-Turn-Trace-Id": turn.TraceID,
+		}))
+		if resumeErr != nil {
+			break
+		}
+		if resumed.StatusCode >= 400 {
+			_ = resumed.Body.Close()
+			break
+		}
+		resumeErr = chatGPTWebConsumeImageStream(resumed.Body, outcome)
+		_ = resumed.Body.Close()
+		if resumeErr != nil {
+			break
+		}
 	}
 	if len(outcome.Pointers) == 0 {
 		if err := s.fetchConversationImages(ctx, outcome.ConversationID, outcome); err != nil {

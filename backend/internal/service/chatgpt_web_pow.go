@@ -3,9 +3,7 @@ package service
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha3"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -17,11 +15,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// ChatGPT Web 网页链路的 sentinel proof-of-work token 生成。
-//
-// 网页链路（chatgpt.com /backend-api/sentinel/chat-requirements）要求客户端提交
-// proof token：对 seed + base64(指纹 JSON) 做 SHA3-512，命中 difficulty 前缀即算解出。
-// 该计算完全本地可做，不需要浏览器；这正是账号 access_token 能直接驱动官网生图的原因。
+// Sentinel PoW follows the browser client's FNV1a32 plus avalanche hash.
+// Both the hash-prefix comparison and the ~S suffix are part of the protocol.
 
 const (
 	chatGPTWebDefaultPowScript  = "https://chatgpt.com/backend-api/sentinel/sdk.js"
@@ -94,13 +89,38 @@ var (
 // chatGPTWebProcessStart 提供 config 中的 performance.now 基准（进程内单调时钟）。
 var chatGPTWebProcessStart = time.Now()
 
+// Keep conversation metadata and the Sentinel date in the same browser timezone.
+// This is independent of the server's timezone used for business data and logs.
+var chatGPTWebBrowserLocation = func() *time.Location {
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		return time.UTC
+	}
+	return location
+}()
+
+func chatGPTWebTimezoneOffset(now time.Time) int {
+	_, secondsEast := now.In(chatGPTWebBrowserLocation).Zone()
+	// JavaScript getTimezoneOffset reports UTC minus local time.
+	return -secondsEast / 60
+}
+
 func chatGPTWebPerfNowMillis() float64 {
 	return float64(time.Since(chatGPTWebProcessStart).Microseconds()) / 1000.0
 }
 
-func chatGPTWebLegacyParseTime(now time.Time) string {
-	eastern := now.In(time.FixedZone("EST", -5*3600))
-	return eastern.Format("Mon Jan 02 2006 15:04:05") + " GMT-0500 (Eastern Standard Time)"
+func chatGPTWebBrowserDate(now time.Time) string {
+	local := now.In(chatGPTWebBrowserLocation)
+	zone, _ := local.Zone()
+	switch zone {
+	case "PST":
+		zone = "Pacific Standard Time"
+	case "PDT":
+		zone = "Pacific Daylight Time"
+	case "JST":
+		zone = "Japan Standard Time"
+	}
+	return local.Format("Mon Jan 02 2006 15:04:05 GMT-0700") + " (" + zone + ")"
 }
 
 func chatGPTWebCompactJSON(value any) string {
@@ -153,14 +173,14 @@ func chatGPTWebPowConfig(userAgent string, scriptSources []string, dataBuild str
 	perfNow := chatGPTWebPerfNowMillis()
 	return []any{
 		resolution[0] + resolution[1],
-		chatGPTWebLegacyParseTime(time.Now()),
+		chatGPTWebBrowserDate(time.Now()),
 		int64(4294705152),
 		1,
 		userAgent,
 		scriptSource,
 		dataBuild,
 		"en-US",
-		"en-US,es-US,en,es",
+		"en-US,en",
 		chatGPTWebRandomFloat(),
 		chatGPTWebPickString(chatGPTWebNavigatorKeys),
 		chatGPTWebPickString(chatGPTWebDocumentKeys),
@@ -225,26 +245,40 @@ func chatGPTWebBuildProofToken(seed, difficulty, userAgent string, scriptSources
 	return "gAAAAAB" + answer, nil
 }
 
-// chatGPTWebPowGenerate 求解 PoW：命中即返回 base64(指纹 JSON)，未命中返回 false。
-// 组装顺序固定为 config[0:3] + i + config[4:9] + i>>1 + config[10:]，与网页端脚本一致。
+// chatGPTWebPowHash matches H3t in the client. Inputs here are the ASCII seed
+// followed by a base64-encoded UTF-8 fingerprint.
+func chatGPTWebPowHash(value string) string {
+	hash := uint32(2166136261)
+	for i := 0; i < len(value); i++ {
+		hash ^= uint32(value[i])
+		hash *= 16777619
+	}
+	hash ^= hash >> 16
+	hash *= 2246822507
+	hash ^= hash >> 13
+	hash *= 3266489909
+	hash ^= hash >> 16
+	return fmt.Sprintf("%08x", hash)
+}
+
 func chatGPTWebPowGenerate(seed, difficulty string, config []any, limit int) (string, bool) {
-	if len(config) < 11 {
+	if len(config) < 11 || len(difficulty) == 0 || len(difficulty) > 8 {
 		return "", false
 	}
-	target, err := hex.DecodeString(strings.TrimSpace(difficulty))
-	if err != nil || len(target) == 0 {
-		return "", false
+	for _, c := range difficulty {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return "", false
+		}
 	}
 	head := strings.TrimSuffix(chatGPTWebCompactJSON(config[:3]), "]") + ","
-	middle := chatGPTWebCompactJSON(config[4:9])
-	middle = "," + strings.TrimSuffix(strings.TrimPrefix(middle, "["), "]") + ","
+	middle := "," + strings.TrimSuffix(strings.TrimPrefix(chatGPTWebCompactJSON(config[4:9]), "["), "]") + ","
 	tail := "," + strings.TrimPrefix(chatGPTWebCompactJSON(config[10:]), "[")
+	started := time.Now()
 	for i := 0; i < limit; i++ {
-		payload := head + strconv.Itoa(i) + middle + strconv.Itoa(i>>1) + tail
+		payload := head + strconv.Itoa(i) + middle + strconv.FormatInt(time.Since(started).Milliseconds(), 10) + tail
 		encoded := base64.StdEncoding.EncodeToString([]byte(payload))
-		digest := sha3.Sum512([]byte(seed + encoded))
-		if bytes.Compare(digest[:len(target)], target) <= 0 {
-			return encoded, true
+		if chatGPTWebPowHash(seed + encoded)[:len(difficulty)] <= difficulty {
+			return encoded + "~S", true
 		}
 	}
 	return "", false

@@ -3,15 +3,20 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"image"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +81,17 @@ func (t *chatGPTWebE2ETransport) Do(req *http.Request, _ string, _ int64, _ int)
 	if err != nil {
 		return nil, err
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if os.Getenv("CGPT_WEB_E2E_TRACE") == "1" {
+		status := 0
+		challenge := false
+		if resp != nil {
+			status = resp.StatusCode
+			challenge = resp.Header.Get("Cf-Mitigated") == "challenge"
+		}
+		fmt.Printf("web-e2e method=%s path=%s status=%d cloudflare_challenge=%t\n", req.Method, req.URL.Path, status, challenge)
+	}
+	return resp, err
 }
 
 func (t *chatGPTWebE2ETransport) DoWithTLS(
@@ -90,7 +105,17 @@ func (t *chatGPTWebE2ETransport) DoWithTLS(
 	if err != nil {
 		return nil, err
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if os.Getenv("CGPT_WEB_E2E_TRACE") == "1" {
+		status := 0
+		challenge := false
+		if resp != nil {
+			status = resp.StatusCode
+			challenge = resp.Header.Get("Cf-Mitigated") == "challenge"
+		}
+		fmt.Printf("web-e2e method=%s path=%s status=%d cloudflare_challenge=%t\n", req.Method, req.URL.Path, status, challenge)
+	}
+	return resp, err
 }
 
 // chatGPTWebE2EResolveToken 支持直接给 access_token，或用浏览器分区 cookie 现场换一个。
@@ -337,7 +362,7 @@ func TestChatGPTWebE2EWebAccountTypeGenerations(t *testing.T) {
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeWebImage,
 		Status:      StatusActive,
-		Credentials: map[string]any{"access_token": session.accessToken},
+		Credentials: map[string]any{"access_token": session.accessToken, "chatgpt_account_id": os.Getenv("CGPT_WEB_E2E_ACCOUNT_ID")},
 	}
 	context, recorder := chatGPTWebE2EGinContext(t)
 
@@ -354,6 +379,18 @@ func TestChatGPTWebE2EWebAccountTypeGenerations(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, result.ImageCount)
 	chatGPTWebE2EAssertImageResponse(t, recorder)
+	if dir := os.Getenv("CGPT_WEB_E2E_OUTPUT_DIR"); dir != "" {
+		raw, decodeErr := base64.StdEncoding.DecodeString(gjson.GetBytes(recorder.Body.Bytes(), "data.0.b64_json").String())
+		require.NoError(t, decodeErr)
+		cfg, format, decodeErr := image.DecodeConfig(bytes.NewReader(raw))
+		require.NoError(t, decodeErr)
+		require.NoError(t, os.MkdirAll(dir, 0700))
+		name := filepath.Join(dir, "web-image-aligned.png")
+		require.NoError(t, os.WriteFile(name, raw, 0600))
+		proof, _ := json.MarshalIndent(map[string]any{"account_type": "web-image", "endpoint": "/backend-api/f/conversation", "bytes": len(raw), "width": cfg.Width, "height": cfg.Height, "format": format, "sha256": fmt.Sprintf("%x", sha256.Sum256(raw))}, "", "  ")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "verification.json"), proof, 0600))
+	}
+
 }
 
 // 面板"测试账号连接"的网页通道分支：用真实账号跑一次，断言 SSE 里带回了图片。

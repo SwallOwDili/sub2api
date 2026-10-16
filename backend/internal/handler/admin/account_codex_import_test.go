@@ -1065,3 +1065,30 @@ func TestCodexImportAccountType(t *testing.T) {
 		}
 	}
 }
+
+func TestImportCodexSessionsNativeKeepsOrdinaryOAuthSeparate(t *testing.T) {
+	for _, nativeImport := range []bool{true, false} {
+		t.Run(fmt.Sprint(nativeImport), func(t *testing.T) {
+			token := buildCodexAccessToken(t, "workspace-native", "user-native", time.Now().Add(time.Hour))
+			existingExtra := map[string]any{}
+			requestExtra := map[string]any{}
+			if nativeImport {
+				requestExtra[service.OpenAIImageChannelExtraKey] = "native"
+			} else {
+				existingExtra[service.OpenAIImageChannelExtraKey] = "native"
+			}
+			svc := newCodexImportMemoryAdminService([]service.Account{{ID: 17, Name: "existing", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Extra: existingExtra, Credentials: map[string]any{"access_token": token, "chatgpt_account_id": "workspace-native", "chatgpt_user_id": "user-native"}}})
+			h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			result, err := h.importCodexSessions(context.Background(), CodexSessionImportRequest{Type: service.AccountTypeOAuth, Extra: requestExtra, SkipDefaultGroupBind: boolPtr(true)}, []codexImportEntry{{Index: 1, Value: map[string]any{"access_token": token}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Created != 1 || result.Updated != 0 || len(svc.updatedAccounts) != 0 {
+				t.Fatalf("cross-channel import mutated existing account: %+v", result)
+			}
+			if len(svc.createdAccounts) != 1 || (svc.createdAccounts[0].Extra[service.OpenAIImageChannelExtraKey] == "native") != nativeImport {
+				t.Fatal("wrong created image channel")
+			}
+		})
+	}
+}

@@ -181,8 +181,9 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 	}
 	// 同一 ChatGPT 身份可以同时存在 OAuth 与 web-image 两条记录，查重仅作用于目标类型。
 	matchingAccounts := make([]service.Account, 0, len(existingAccounts))
+	target := &service.Account{Platform: service.PlatformOpenAI, Type: importAccountType, Extra: req.Extra}
 	for _, existing := range existingAccounts {
-		if existing.Type == importAccountType {
+		if existing.Type == importAccountType && existing.UsesOpenAINativeImageChannel() == target.UsesOpenAINativeImageChannel() {
 			matchingAccounts = append(matchingAccounts, existing)
 		}
 	}

@@ -6,7 +6,7 @@
 
 ## 可用凭据（实测结论）
 
-不需要浏览器，也不需要打码服务。两样东西：
+基础请求使用 Chrome TLS 指纹，不启动完整浏览器。若 Sentinel 返回 `turnstile.required=true`，还需要配置下述本地 VM 解算命令。基础凭据：
 
 1. **账号的 ChatGPT access_token**：sub2api 的 OpenAI OAuth 账号里已有。
 2. **真 Chrome 的 TLS 指纹**（`tlsfingerprint.Profile{Preset: PresetChrome}`）：`chatgpt.com` 前置
@@ -34,7 +34,7 @@ POST /backend-api/sentinel/chat-requirements/finalize
       -> token（OpenAI-Sentinel-Chat-Requirements-Token）
 POST /backend-api/f/conversation/prepare          {"system_hints":["picture_v2"]}  -> conduit_token
 POST /backend-api/f/conversation                  (SSE) -> 工具消息里的图片指针
-GET  /backend-api/files/{id}/download | /conversation/{cid}/attachment/{aid}/download
+GET  /backend-api/files/download/{id}?conversation_id={cid} | /backend-api/conversation/{cid}/attachment/{aid}/download
       -> download_url -> 匿名 HTTPS 签名地址直返，或由网关下载需鉴权的第一方地址
 DELETE /backend-api/conversation/id/{cid}          -> 异步清理生图会话
 GET  /backend-api/conversation/init               -> limits_progress[feature_name=image_gen] 剩余额度
@@ -53,16 +53,14 @@ POST /backend-api/files/{file_id}/uploaded   确认
 图片只在**工具或助手输出消息**中被采信：`author.role` 为 `tool` / `assistant`，
 或 `metadata.async_task_type == "image_gen"`；指针形如 `file-service://file_x` / `sediment://file_x`。
 用户输入附件被排除，参考图不会被当成输出。
-SSE 未给出图片时回退轮询 `/backend-api/conversation/{id}`（120s 上限）。
+SSE 未给出图片时回退轮询 `/backend-api/conversations/{id}?num_turns=10&include_has_versions=true`（300s 上限）。
 
 ## Sentinel 现状
 
-- **PoW**：`SHA3-512(seed + base64(指纹 JSON))` 前缀命中 difficulty，本地几十次迭代即解出，已实现并与
-  参考实现逐字节对拍（固定向量测试）。
-- **Turnstile：不实现**。服务端已把挑战换成动态槽位形式（`dx` 解出的指令表里 opcode 是运行时浮点
-  槽位），公开参考实现与本地移植对同一份真实样本都只产出空 token。实测不携带
-  `OpenAI-Sentinel-Turnstile-Token` 时 finalize 仍正常签发 sentinel token，因此直接跳过，
-  不引入浏览器或打码依赖，也不保留解算器——留着只会让后来者以为这条已经处理过。
+- **PoW**：使用浏览器协议的 FNV1a32 + avalanche 哈希，本地求解。
+- **Turnstile**：仅在上游要求时执行。通过 `SUB2API_CHATGPT_WEB_TURNSTILE_COMMAND` 配置命令 argv 的 JSON 数组；未配置、超时或解算失败会终止请求，不会跳过校验。
+  配置示例及运行依赖见 [Turnstile 运行说明](../backend/scripts/chatgpt-web-turnstile.README.md)。挑战通过 stdin 传入，账号凭据不传给命令。
+- **Cloudflare**：入口挑战与 Sentinel 校验分别识别。Chrome TLS preset 不保证永远免于挑战，挑战页不按账号凭据失效冷却。
 
 ## 代码结构
 
@@ -175,6 +173,8 @@ ChatGPT Web 协议 → 图片响应`，无需真实凭据即可回归完整服�
 对客户端的状态码：只有限额回 429，其余账号侧问题一律 502——不把"某个账号的凭证失效"暴露成
 客户端错误。不带状态码的本地错误（网络/代理）保持既有语义：原样报错，不换号。
 
+会话轮询的网络错误或 5xx 最多连续尝试 3 次，每次间隔 2 秒，始终查询原会话；鉴权、限额和挑战错误立即返回。成功查询会重置连续失败次数。上传初始化和确认接口使用同一分类逻辑；签名存储上传错误不作为 ChatGPT 账号失效处理。
+
 ## 面板测试
 
 后台「测试账号连接」对网页通道账号会走网页链路：分流依据与转发完全同一处
@@ -196,3 +196,10 @@ ChatGPT Web 协议 → 图片响应`，无需真实凭据即可回归完整服�
   超过 4 返回 400 `invalid_request_error`。上限保守是因为网页端每条会话都是一次真实浏览器回合，
   并发过高会触发账号滥用控制。部分失败时返回已成功的图片，全部失败才报错。
 - **风控**：与其他网页逆向方案同级，避免高强度批量调用。
+
+## Native-Image 与网页通道的边界
+
+Native-Image 使用独立的 `/backend-api/codex/images/generations` 和 `/backend-api/codex/images/edits` 路径。
+当前本地契约为单张 PNG、无 mask，不支持 partial_images、output_compression、moderation、style 或 input_fidelity。
+调度会提前排除不兼容的 Native-Image 账号，保留转发前校验；普通 OAuth 请求仍走 Responses。
+上游接受参数并不代表参数实际生效，不能据 HTTP 200 宣称质量、尺寸或格式已按请求执行。

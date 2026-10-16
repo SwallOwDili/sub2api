@@ -276,7 +276,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesChatGPTWeb(
 		account.ID,
 		len(parsed.Uploads),
 	)
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	upstreamCtx, releaseUpstreamCtx := context.WithCancel(ctx)
 	defer releaseUpstreamCtx()
 
 	token, _, err := s.GetAccessToken(upstreamCtx, account)
@@ -306,7 +306,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesChatGPTWeb(
 		return s.fetchPublicImageBytes(fetchCtx, account, rawURL)
 	})
 	if err != nil {
-		return nil, err
+		return nil, s.handleChatGPTWebImagesFailure(upstreamCtx, c, account, err)
 	}
 	upstreamPrompt := chatGPTWebPromptWithCanvasSize(parsed.Prompt, parsed.Size)
 	urlOutput := strings.EqualFold(strings.TrimSpace(parsed.ResponseFormat), "url")

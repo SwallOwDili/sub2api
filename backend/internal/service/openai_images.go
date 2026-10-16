@@ -575,6 +575,12 @@ func (s *OpenAIGatewayService) ForwardImages(
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
 	case AccountTypeOAuth, AccountTypeSetupToken, AccountTypeWebImage, accountTypeWebImageLegacy:
+		if err := validateOpenAIImageChannel(account); err != nil {
+			return nil, err
+		}
+		if account.UsesOpenAINativeImageChannel() {
+			return s.forwardOpenAIImagesNative(ctx, c, account, parsed, channelMappedModel)
+		}
 		// web 类型直接走网页通道；OAuth/setup-token 按账号开关走，其余保持原 Codex 路径。
 		if account.UsesChatGPTWebImageChannel() {
 			return s.forwardOpenAIImagesChatGPTWeb(ctx, c, account, parsed, channelMappedModel)
