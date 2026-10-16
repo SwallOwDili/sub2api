@@ -26,6 +26,8 @@ services:
         soft: 100000
         hard: 100000
     ports:
+      # Mapping is ready; the diagnostic listener remains disabled by default.
+      - "${SUB2API_PPROF_PORT:-6060}:${SUB2API_PPROF_PORT:-6060}"
       - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
@@ -48,6 +50,8 @@ services:
       # =======================================================================
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
+      - SUB2API_PPROF_ENABLED=${SUB2API_PPROF_ENABLED:-false}
+      - SUB2API_PPROF_PORT=${SUB2API_PPROF_PORT:-6060}
       - SERVER_MODE=${SERVER_MODE:-release}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}

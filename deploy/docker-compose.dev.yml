@@ -20,6 +20,8 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
+      # Mapping is ready; the diagnostic listener remains disabled by default.
+      - "${SUB2API_PPROF_PORT:-6060}:${SUB2API_PPROF_PORT:-6060}"
       - "${BIND_HOST:-127.0.0.1}:${SERVER_PORT:-8080}:8080"
     volumes:
       - ./data:/app/data:Z
@@ -27,6 +29,8 @@ services:
       - AUTO_SETUP=true
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
+      - SUB2API_PPROF_ENABLED=${SUB2API_PPROF_ENABLED:-false}
+      - SUB2API_PPROF_PORT=${SUB2API_PPROF_PORT:-6060}
       - SERVER_MODE=debug
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
