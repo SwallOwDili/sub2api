@@ -21,6 +21,8 @@ import (
 
 // This regression fixture was captured from a standalone codex-cli 0.160.1
 // model-provider request to an isolated HTTPS endpoint on macOS arm64.
+// Re-captured from standalone 0.163.0 on 2026-10-16: JA3 and all non-SNI
+// extension payloads are unchanged; both versions use this transport fixture.
 const codexCLIJA3 = "771,255-49196-49195-49188-49187-49162-49161-49160-49200-49199-49192-49191-49172-49171-49170-157-156-61-60-53-47-10,0-10-11-13-5-18-23,23-24-25,0"
 
 func TestCodexCLIClientHelloJA3(t *testing.T) {

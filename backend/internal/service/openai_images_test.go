@@ -857,6 +857,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthPassesNAndReturnsAllImages(t *te
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "acct-123", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Equal(t, oauthImageCodexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("Originator"))
 
 	require.Equal(t, openAIImagesResponsesMainModel, gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
@@ -1707,6 +1710,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingTransformsEvents(t *tes
 
 	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
 	require.NoError(t, err)
+	require.Equal(t, oauthImageCodexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
 	require.Equal(t, 1, result.ImageCount)
@@ -1861,6 +1867,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthEditsMultipartUsesResponsesAPI(t
 
 	result, err := svc.ForwardImages(context.Background(), c, account, body.Bytes(), parsed, "")
 	require.NoError(t, err)
+	require.Equal(t, oauthImageCodexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.ImageCount)
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(upstream.lastBody, "tools.0.model").String())
@@ -1923,6 +1932,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthEditsStreamingTransformsEvents(t
 
 	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
 	require.NoError(t, err)
+	require.Equal(t, oauthImageCodexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.ImageCount)
 	require.Equal(t, "edit", gjson.GetBytes(upstream.lastBody, "tools.0.action").String())

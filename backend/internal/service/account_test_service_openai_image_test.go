@@ -48,6 +48,8 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-2.5-flare", "draw a cat")
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, oauthImageCodexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("Version"))
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, "gpt-image-2.5-flare", gjson.GetBytes(upstream.lastBody, "tools.0.model").String())
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))

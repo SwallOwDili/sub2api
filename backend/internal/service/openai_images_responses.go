@@ -1850,6 +1850,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err != nil {
 		return nil, err
 	}
+	applyOAuthImageCodexIdentity(upstreamReq.Header, account)
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Accept", "text/event-stream")
 	upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")

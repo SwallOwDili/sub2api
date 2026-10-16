@@ -13,12 +13,17 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
 
 // The authentication remains OAuth. Only explicitly marked image-only accounts
 // use the native Images endpoint; ordinary OAuth still uses Responses.
 const OpenAIImageChannelExtraKey = "openai_image_channel"
+
+// Captured from the standalone CLI 0.163.0 native image tool on macOS arm64.
+// This identity is intentionally scoped to Native-Image, independent of Responses.
+const nativeImageCLIUserAgent = "codex_exec/0.163.0 (Mac OS 15.6.0; arm64) dumb (codex_exec; 0.163.0)"
 
 func (a *Account) UsesOpenAINativeImageChannel() bool {
 	return a != nil && a.Platform == PlatformOpenAI && a.Type == AccountTypeOAuth && a.GetExtraString(OpenAIImageChannelExtraKey) == "native"
@@ -131,7 +136,11 @@ func (s *OpenAIGatewayService) buildOpenAINativeImagesRequest(ctx context.Contex
 	req.URL.RawPath = ""
 	req.URL.RawQuery = ""
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", nativeImageCLIUserAgent)
+	req.Header.Set("Originator", "codex_exec")
+	req.Header.Del("Version")
+	req.Header.Set("X-Codex-Image-Turn-Id", uuid.Must(uuid.NewV7()).String())
 	req.Header.Del("OpenAI-Beta")
 	return req, nil
 }
