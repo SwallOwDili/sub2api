@@ -330,6 +330,19 @@ export default {
       privacyAntigravityFailed: 'Privacy setting failed',
       setPrivacy: 'Set Privacy',
       subscriptionAbnormal: 'Abnormal',
+      entitlement: {
+        valid: 'Subscription not expired',
+        expired: 'Subscription expired',
+        unknown: 'Subscription expiry unknown',
+        grace: 'Grace period ends',
+        expires: 'Subscription expires',
+        renews: 'Renews at',
+        cancels: 'Cancels at',
+        ended: 'Ended',
+        notProvided: 'Not provided',
+        refreshHint: 'Refresh token to update subscription details',
+        checkedAt: 'Checked at',
+      },
       subscriptionExpires: 'Expires',
       // Capacity status tooltips
       capacity: {
@@ -1504,6 +1517,7 @@ export default {
       usageStatistics: 'Usage Statistics',
       last30DaysUsage: 'Last 30 days usage statistics (based on actual usage days)',
       stats: {
+        totalCost60Days: 'Past 60 Days Total Cost',
         totalCost: '30-Day Total Cost',
         accumulatedCost: 'Accumulated cost',
         standardCost: 'Standard',
@@ -1521,6 +1535,7 @@ export default {
         highestRequestDay: 'Highest Request Day',
         date: 'Date',
         accumulatedTokens: 'Accumulated Tokens',
+        totalTokens60Days: '60-Day Total',
         totalTokens: '30-Day Total',
         dailyAvgTokens: 'Daily Average',
         performance: 'Performance',

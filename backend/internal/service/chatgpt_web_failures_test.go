@@ -23,9 +23,11 @@ import (
 
 type webPollFailureTransport struct {
 	HTTPUpstream
-	statuses  []int
-	challenge bool
-	calls     int
+	statuses     []int
+	challenge    bool
+	emptySuccess bool
+	retryAfter   string
+	calls        int
 }
 
 func (f *webPollFailureTransport) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
@@ -42,11 +44,14 @@ func (f *webPollFailureTransport) DoWithTLS(req *http.Request, _ string, _ int64
 		return nil, errors.New("temporary network failure")
 	}
 	header := make(http.Header)
+	if f.retryAfter != "" {
+		header.Set("Retry-After", f.retryAfter)
+	}
 	if f.challenge {
 		header.Set("cf-mitigated", "challenge")
 	}
 	body := `{"error":"fixture"}`
-	if status == 200 {
+	if status == 200 && !f.emptySuccess {
 		body = `{"message":{"author":{"role":"tool"},"content":{"parts":[{"asset_pointer":"file-service://result"}]}}}`
 	}
 	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
@@ -70,6 +75,7 @@ func TestChatGPTWebPollTransientRecoveryAndExhaustion(t *testing.T) {
 		statuses []int
 		success  bool
 	}{
+		{"new conversation visibility", []int{404, 200}, true},
 		{"server recovery", []int{503, 200}, true}, {"network recovery", []int{0, 200}, true},
 		{"server exhaustion", []int{503}, false}, {"network exhaustion", []int{0}, false},
 	} {
@@ -196,4 +202,79 @@ func TestChatGPTWebPollCancellationInterruptsRetryWait(t *testing.T) {
 	err := session.fetchConversationImages(ctx, "conversation", &chatGPTWebImageOutcome{})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Equal(t, 1, transport.calls)
+}
+
+func TestChatGPTWebPollMissingConversationHonorsCancellation(t *testing.T) {
+	transport := &webPollFailureTransport{statuses: []int{404}}
+	session := newChatGPTWebSession(transport, nil, "fixture", chatGPTWebDevice{})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := session.fetchConversationImages(ctx, "new-conversation", &chatGPTWebImageOutcome{})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, 1, transport.calls)
+}
+
+func TestChatGPTWebPollMissingConversationGraceExpires(t *testing.T) {
+	t.Parallel()
+	transport := &webPollFailureTransport{statuses: []int{404}}
+	session := newChatGPTWebSession(transport, nil, "fixture", chatGPTWebDevice{})
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	err := session.fetchConversationImages(ctx, "new-conversation", &chatGPTWebImageOutcome{})
+	var upstream *chatGPTWebUpstreamError
+	require.ErrorAs(t, err, &upstream)
+	require.Equal(t, 404, upstream.StatusCode)
+	require.Greater(t, transport.calls, 1)
+	require.LessOrEqual(t, transport.calls, 17)
+}
+
+func TestChatGPTWebPollVisibleConversationDoesNotRetry404(t *testing.T) {
+	transport := &webPollFailureTransport{statuses: []int{200, 404}, emptySuccess: true}
+	session := newChatGPTWebSession(transport, nil, "fixture", chatGPTWebDevice{})
+	err := session.fetchConversationImages(context.Background(), "conversation", &chatGPTWebImageOutcome{})
+	var upstream *chatGPTWebUpstreamError
+	require.ErrorAs(t, err, &upstream)
+	require.Equal(t, 404, upstream.StatusCode)
+	require.Equal(t, 2, transport.calls)
+}
+
+func TestChatGPTWebPollRateLimitHonorsRetryAfter(t *testing.T) {
+	t.Parallel()
+	transport := &webPollFailureTransport{statuses: []int{429, 200}, retryAfter: "3"}
+	session := newChatGPTWebSession(transport, nil, "fixture", chatGPTWebDevice{})
+	started := time.Now()
+	err := session.fetchConversationImages(context.Background(), "conversation", &chatGPTWebImageOutcome{})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, time.Since(started), 3*time.Second)
+	require.Equal(t, 2, transport.calls)
+}
+
+func TestChatGPTWebPollRateLimitBudgetAndChallenge(t *testing.T) {
+	for _, tc := range []struct {
+		name, retry string
+		challenge   bool
+	}{
+		{"no delay", "", false}, {"too long", "3600", false}, {"challenge", "1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &webPollFailureTransport{statuses: []int{429}, retryAfter: tc.retry, challenge: tc.challenge}
+			session := newChatGPTWebSession(transport, nil, "fixture", chatGPTWebDevice{})
+			err := session.fetchConversationImages(context.Background(), "conversation", &chatGPTWebImageOutcome{})
+			var upstream *chatGPTWebUpstreamError
+			require.ErrorAs(t, err, &upstream)
+			require.Equal(t, 429, upstream.StatusCode)
+			require.Equal(t, 1, transport.calls)
+		})
+	}
+}
+
+func TestChatGPTWebPollRateLimitRetriesAreBounded(t *testing.T) {
+	t.Parallel()
+	transport := &webPollFailureTransport{statuses: []int{429}, retryAfter: "1"}
+	session := newChatGPTWebSession(transport, nil, "fixture", chatGPTWebDevice{})
+	err := session.fetchConversationImages(context.Background(), "conversation", &chatGPTWebImageOutcome{})
+	var upstream *chatGPTWebUpstreamError
+	require.ErrorAs(t, err, &upstream)
+	require.Equal(t, 429, upstream.StatusCode)
+	require.Equal(t, 4, transport.calls)
 }

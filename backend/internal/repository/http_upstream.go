@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/chatgptnetwork"
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/mod/semver"
@@ -585,7 +586,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 		return nil, fmt.Errorf("build TLS fingerprint transport: %w", err)
 	}
 
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: wrapUpstreamNetwork(transport, parsedProxy != nil)}
 	if s.shouldValidateResolvedIP() {
 		client.CheckRedirect = s.redirectChecker
 	}
@@ -740,7 +741,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 		s.mu.Unlock()
 		return nil, fmt.Errorf("build transport: %w", err)
 	}
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: wrapUpstreamNetwork(transport, parsedProxy != nil)}
 	if s.shouldValidateResolvedIP() {
 		client.CheckRedirect = s.redirectChecker
 	}
@@ -1565,4 +1566,16 @@ func (d *decompressedBody) Close() error {
 		_ = rc.Close()
 	}
 	return d.closer.Close()
+}
+
+func wrapUpstreamNetwork(t *http.Transport, proxy bool) http.RoundTripper {
+	return chatgptnetwork.Wrap(t, proxy, func(clone *http.Transport) error {
+		if !clone.ForceAttemptHTTP2 {
+			return nil
+		}
+		// Do not reuse TLSNextProto closures bound to the original HTTP/2 pool.
+		clone.TLSNextProto = nil
+		_, err := enableHTTP2KeepAlive(clone)
+		return err
+	})
 }

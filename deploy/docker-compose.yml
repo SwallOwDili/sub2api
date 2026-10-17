@@ -48,6 +48,7 @@ services:
       # =======================================================================
       # Server Configuration
       # =======================================================================
+      - SUB2API_CHATGPT_IPV6_ONLY=${SUB2API_CHATGPT_IPV6_ONLY:-false}
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - SUB2API_PPROF_ENABLED=${SUB2API_PPROF_ENABLED:-false}

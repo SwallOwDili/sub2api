@@ -89,6 +89,31 @@ const cnUsageCellStubs = {
 }
 
 describe('AccountUsageCell', () => {
+  it.each(['web-image', 'native-image'])('shows daily consumption without OAuth quota queries for %s', async (channel) => {
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          platform: 'openai',
+          type: channel === 'web-image' ? 'web-image' : 'oauth',
+          extra: channel === 'native-image' ? { openai_image_channel: 'native' } : {},
+        }),
+        todayStats: { requests: 3, tokens: 915, cost: 0.12, standard_cost: 0.12, user_cost: 0.24 },
+        requestBatchedUsage,
+      },
+      global: { stubs: { OpenAIQuotaResetCell: true } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('3 req')
+    expect(wrapper.text()).toContain('915')
+    expect(wrapper.text()).toContain('A $0.12')
+    expect(wrapper.text()).toContain('U $0.24')
+    expect(wrapper.findComponent({ name: 'OpenAIQuotaResetCell' }).exists()).toBe(false)
+    expect(getUsage).not.toHaveBeenCalled()
+    expect(requestBatchedUsage).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     getUsage.mockReset()
     Object.defineProperty(window, 'matchMedia', {

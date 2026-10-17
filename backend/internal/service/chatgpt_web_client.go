@@ -366,6 +366,7 @@ func (s *chatGPTWebSession) fetchSentinel(ctx context.Context) (*chatGPTWebSenti
 // chatGPTWebUpstreamError 保留上游状态码，供上层决定换号/冷却。
 type chatGPTWebUpstreamError struct {
 	StatusCode int
+	RetryAfter time.Duration
 	Message    string
 	Body       []byte
 	// Challenge 表示命中 Cloudflare 挑战页（HTML 拦截页），换号无意义。
@@ -434,12 +435,18 @@ func (e *chatGPTWebUpstreamError) clientStatusCode() int {
 
 func newChatGPTWebResponseError(response *http.Response, fallback string, body []byte) *chatGPTWebUpstreamError {
 	statusCode := 0
+	var retryAfter time.Duration
 	if response != nil {
 		statusCode = response.StatusCode
+		now := time.Now()
+		if resetAt := parseRetryAfterResetTime(response.Header, now); resetAt != nil && resetAt.After(now) {
+			retryAfter = resetAt.Sub(now)
+		}
 	}
 	message := fmt.Sprintf("%s: HTTP %d: %s", fallback, statusCode, truncateChatGPTWebText(string(body), 200))
 	return &chatGPTWebUpstreamError{
 		StatusCode: statusCode,
+		RetryAfter: retryAfter,
 		Message:    message,
 		Body:       body,
 		Challenge:  isChatGPTWebChallengePage(response, body),
@@ -950,8 +957,16 @@ func (s *chatGPTWebSession) fetchConversationImages(
 	ctx, cancel := context.WithTimeout(ctx, chatGPTWebPollTimeout)
 	defer cancel()
 	deadline := time.Now().Add(chatGPTWebPollTimeout)
+	// A newly accepted async turn can return conversation_inaccessible (404)
+	// until its read model is visible. Keep polling this ID briefly; never
+	// resubmit the generation or treat established conversations as missing.
+	visibilityDeadline := time.Now().Add(30 * time.Second)
+	conversationVisible := false
+	pollDelay := chatGPTWebPollInterval
+	rateLimitRetries := 0
 	transientFailures := 0
 	for {
+		nextDelay := pollDelay
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -961,6 +976,7 @@ func (s *chatGPTWebSession) fetchConversationImages(
 			var body []byte
 			body, err = readChatGPTWebBody(response)
 			if err == nil {
+				conversationVisible = true
 				var decoded any
 				if err = json.Unmarshal(body, &decoded); err != nil {
 					return fmt.Errorf("decode chatgpt web conversation: %w", err)
@@ -969,6 +985,10 @@ func (s *chatGPTWebSession) fetchConversationImages(
 				if len(outcome.Pointers) > 0 {
 					return nil
 				}
+				// Async image jobs usually take much longer than a single read.
+				// Back off successful empty reads instead of polling every 2s.
+				pollDelay = min(pollDelay*2, 10*time.Second)
+				nextDelay = pollDelay
 			}
 		}
 		if err != nil {
@@ -976,13 +996,28 @@ func (s *chatGPTWebSession) fetchConversationImages(
 				return ctx.Err()
 			}
 			var upstreamErr *chatGPTWebUpstreamError
-			// Retry transient failures on the existing conversation, never resubmit a turn.
-			if errors.As(err, &upstreamErr) && (upstreamErr.Challenge || upstreamErr.StatusCode < 500) {
-				return err
-			}
-			transientFailures++
-			if transientFailures >= 3 {
-				return err
+			visibilityPending := errors.As(err, &upstreamErr) &&
+				!upstreamErr.Challenge && upstreamErr.StatusCode == http.StatusNotFound &&
+				!conversationVisible && time.Now().Before(visibilityDeadline)
+			rateLimitPending := errors.As(err, &upstreamErr) && !upstreamErr.Challenge &&
+				upstreamErr.StatusCode == http.StatusTooManyRequests && upstreamErr.RetryAfter > 0 &&
+				rateLimitRetries < 3 && time.Now().Add(upstreamErr.RetryAfter).Before(deadline)
+			if rateLimitPending {
+				// Honor the upstream delay on this existing task, never resubmit.
+				rateLimitRetries++
+				nextDelay = pollDelay
+				if upstreamErr.RetryAfter > nextDelay {
+					nextDelay = upstreamErr.RetryAfter
+				}
+			} else if !visibilityPending {
+				// Auth, unbounded quota waits, challenges and persistent 404s fail explicitly.
+				if errors.As(err, &upstreamErr) && (upstreamErr.Challenge || upstreamErr.StatusCode < 500) {
+					return err
+				}
+				transientFailures++
+				if transientFailures >= 3 {
+					return err
+				}
 			}
 		} else {
 			transientFailures = 0
@@ -990,7 +1025,7 @@ func (s *chatGPTWebSession) fetchConversationImages(
 		if time.Now().After(deadline) {
 			return fmt.Errorf("chatgpt web image task timed out after %s", chatGPTWebPollTimeout)
 		}
-		timer := time.NewTimer(chatGPTWebPollInterval)
+		timer := time.NewTimer(nextDelay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

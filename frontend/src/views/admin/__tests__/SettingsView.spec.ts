@@ -1096,6 +1096,18 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it.each([false, true])("loads and toggles ChatGPT IPv6 from %s", async (enabled) => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, chatgpt_ipv6_only: enabled });
+    const wrapper = mountView();
+    await flushPromises();
+    const toggle = wrapper.find<HTMLInputElement>('[data-testid="chatgpt-ipv6-only"]');
+    expect(toggle.element.checked).toBe(enabled);
+    await toggle.setValue(!enabled);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ chatgpt_ipv6_only: !enabled }));
+  });
+
   it("submits Anthropic cache TTL injection gateway setting", async () => {
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,

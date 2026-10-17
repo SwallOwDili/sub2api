@@ -28,10 +28,9 @@
 
       <div v-if="account.platform === 'openai' && account.type === 'oauth' && !account.parent_account_id && !['personalAccessToken', 'agentIdentity'].includes(String(account.credentials?.auth_mode || ''))">
         <label class="input-label">{{ t('admin.accounts.types.imageChannel') }}</label>
-        <select v-model="openAIImageChannel" class="input" data-testid="edit-openai-image-channel">
-          <option value="responses">OAuth / Responses</option>
-          <option value="native">Native-Image</option>
-        </select>
+        <div class="input bg-gray-50 dark:bg-dark-800" data-testid="edit-openai-image-channel">
+          {{ openAIImageChannel === 'native' ? 'Native-Image' : 'OAuth / Responses' }}
+        </div>
         <p v-if="openAIImageChannel === 'native'" class="input-hint">{{ t('admin.accounts.types.nativeImageHint') }}</p>
       </div>
 
@@ -3365,7 +3364,7 @@ const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
-const openAIImageChannel = ref('responses')
+const openAIImageChannel = computed(() => props.account?.extra?.openai_image_channel === 'native' ? 'native' : 'responses')
 const upstreamRequestIdHeader = ref('')
 const readUpstreamRequestIdHeader = (extra: unknown): string => {
   const value = (extra as Record<string, unknown> | undefined)?.upstream_request_id_header
@@ -3903,7 +3902,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	mixedScheduling.value = extra?.mixed_scheduling === true
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
-  openAIImageChannel.value = extra?.openai_image_channel === 'native' ? 'native' : 'responses'
 	openAIImagesUrlToB64JsonEnabled.value = extra?.images_url_to_b64_json === true
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
@@ -5397,10 +5395,6 @@ const handleSubmit = async () => {
     if (props.account.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'apikey')) {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
-      if (props.account.type === 'oauth') {
-        if (openAIImageChannel.value === 'native') newExtra.openai_image_channel = 'native'
-        else delete newExtra.openai_image_channel
-      }
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true
       if (props.account.type === 'oauth' || props.account.type === 'setup-token') {
         newExtra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value

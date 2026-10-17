@@ -221,6 +221,19 @@ export default {
       privacyAntigravityFailed: '隐私设置失败',
       setPrivacy: '设置隐私',
       subscriptionAbnormal: '异常',
+      entitlement: {
+        valid: '订阅未到期',
+        expired: '订阅已到期',
+        unknown: '订阅到期状态未知',
+        grace: '宽限期截止',
+        expires: '订阅到期',
+        renews: '续费时间',
+        cancels: '取消时间',
+        ended: '已结束',
+        notProvided: '未提供',
+        refreshHint: '刷新令牌后更新订阅信息',
+        checkedAt: '查询时间',
+      },
       subscriptionExpires: '到期',
       // 容量状态提示
       capacity: {
@@ -1562,6 +1575,7 @@ export default {
       usageStatistics: '使用统计',
       last30DaysUsage: '近30天使用统计（日均基于实际使用天数）',
       stats: {
+        totalCost60Days: '过去60天总费用',
         totalCost: '30天总费用',
         accumulatedCost: '累计成本',
         standardCost: '标准计费',
@@ -1579,6 +1593,7 @@ export default {
         highestRequestDay: '最高请求日',
         date: '日期',
         accumulatedTokens: '累计 Token',
+        totalTokens60Days: '60天总计',
         totalTokens: '30天总计',
         dailyAvgTokens: '日均 Token',
         performance: '性能',

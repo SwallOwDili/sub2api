@@ -517,6 +517,8 @@ export default {
         openaiCodexClientVersion: 'Codex 客户端版本号',
         openaiCodexClientVersionPlaceholder: '留空则跟随自动同步',
         openaiCodexClientVersionHint: 'Core 版本同时写入 User-Agent 与 version 头。留空跟随自动同步；较新的同步 CLI 版本也会让默认画像整体切换为 codex exec，显式填写的 Desktop 元组不受影响。',
+        chatgptIPv6Only: 'ChatGPT 仅使用 IPv6',
+        chatgptIPv6OnlyHint: '覆盖 OAuth 普通 API 和三条生图链路，保存后对新请求生效。容器须具备 IPv6；配置代理时会报错，不回退 IPv4。其他平台不受影响。',
         openaiCodexVersionAutoSync: '自动同步 Codex 版本号',
         openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库获取最新稳定 CLI Core 版本。较新版本会让默认画像整体切换为 codex exec，不会把独立 CLI 版本局部塞进 Desktop 的 Core/frontend 元组。',
         openaiCodexVersionSyncedValue: '当前同步到：{version}',

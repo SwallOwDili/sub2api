@@ -1,7 +1,7 @@
 // Diagnostic copy of the installed client VM; no credentials are written.
 const fs=require('node:fs');const {webcrypto}=require('node:crypto');
 const input=JSON.parse(fs.readFileSync(0,'utf8'));
-const {JSDOM}=require(require.resolve('jsdom',{paths:[process.cwd(),require('node:path').resolve(__dirname,'../../frontend')]}));
+const {JSDOM}=require(require.resolve('jsdom',{paths:[__dirname,process.cwd(),require('node:path').resolve(__dirname,'../../frontend')]}));
 const dom=new JSDOM('<!doctype html><html><head></head><body></body></html>',{url:'https://chatgpt.com/',pretendToBeVisual:true,runScripts:'outside-only'});
 const window=dom.window,document=window.document,navigator=window.navigator;
 Object.defineProperty(navigator,'userAgent',{value:input.ua,configurable:true});

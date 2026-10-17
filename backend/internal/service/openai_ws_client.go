@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/chatgptnetwork"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
@@ -184,7 +185,7 @@ func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client,
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s", parsedProxyURL.Scheme)
 	}
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: chatgptnetwork.Wrap(transport, parsedProxyURL != nil)}
 	d.proxyClients[normalizedProxy] = &openAIWSProxyClientEntry{
 		client:           client,
 		lastUsedUnixNano: now,
@@ -253,9 +254,7 @@ func closeOpenAIWSProxyClient(client *http.Client) {
 	if client == nil || client.Transport == nil {
 		return
 	}
-	if transport, ok := client.Transport.(*http.Transport); ok && transport != nil {
-		transport.CloseIdleConnections()
-	}
+	client.CloseIdleConnections()
 }
 
 func (d *coderOpenAIWSClientDialer) SnapshotTransportMetrics() OpenAIWSTransportMetricsSnapshot {

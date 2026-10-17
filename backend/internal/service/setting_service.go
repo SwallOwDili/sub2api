@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/chatgptnetwork"
 	"strings"
 	"sync/atomic"
 
@@ -434,4 +435,19 @@ func (s *SettingService) getStringOrDefault(settings map[string]string, key, def
 		return value
 	}
 	return defaultValue
+}
+
+func (s *SettingService) InitializeChatGPTNetwork(ctx context.Context) error {
+	settings, err := s.GetAllSettings(ctx)
+	if err != nil {
+		return err
+	}
+	chatgptnetwork.ConfigureSource(settings.ChatGPTIPv6Only, func(ctx context.Context) (bool, error) {
+		raw, err := s.settingRepo.GetValue(ctx, "chatgpt_ipv6_only")
+		if errors.Is(err, ErrSettingNotFound) {
+			return chatgptnetwork.DefaultEnabled(), nil
+		}
+		return raw == "true", err
+	})
+	return err
 }

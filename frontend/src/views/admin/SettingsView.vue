@@ -5775,6 +5775,13 @@
                 </div>
                 <Toggle v-model="form.openai_codex_version_auto_sync_enabled" />
               </div>
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.settings.gatewayForwarding.chatgptIPv6Only") }}</label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.settings.gatewayForwarding.chatgptIPv6OnlyHint") }}</p>
+                </div>
+                <Toggle v-model="form.chatgpt_ipv6_only" data-testid="chatgpt-ipv6-only" />
+              </div>
 
             </div>
           </div>
@@ -9786,6 +9793,7 @@ const form = reactive<SettingsForm>({
   rewrite_message_cache_control: false,
   enable_client_dateline_normalization: true,
   antigravity_user_agent_version: "",
+  chatgpt_ipv6_only: false,
   openai_codex_user_agent: "",
   openai_codex_client_version: "",
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
@@ -11371,6 +11379,7 @@ async function saveSettings() {
         form.enable_client_dateline_normalization,
       antigravity_user_agent_version:
         form.antigravity_user_agent_version?.trim() || "",
+      chatgpt_ipv6_only: form.chatgpt_ipv6_only,
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
       openai_codex_client_version:

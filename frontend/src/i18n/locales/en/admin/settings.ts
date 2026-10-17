@@ -524,6 +524,8 @@ export default {
         openaiCodexClientVersion: 'Codex client version',
         openaiCodexClientVersionPlaceholder: 'Leave empty to follow auto-sync',
         openaiCodexClientVersionHint: 'Core version shared by the User-Agent and version header. Leave empty to follow auto-sync. A newer synced CLI version also updates the default profile as a complete codex exec tuple; explicit Desktop tuples are not modified.',
+        chatgptIPv6Only: 'ChatGPT IPv6 only',
+        chatgptIPv6OnlyHint: 'Applies to OAuth APIs and all three image channels after saving. Requires container IPv6. Configured proxies are rejected; no IPv4 fallback. Other platforms are unchanged.',
         openaiCodexVersionAutoSync: 'Auto-sync Codex version',
         openaiCodexVersionAutoSyncHint: 'Fetches the latest stable CLI Core version every 6 hours. A newer version updates the default profile as a complete codex exec tuple; it never splices a CLI version into a Desktop Core/frontend tuple.',
         openaiCodexVersionSyncedValue: 'Currently synced: {version}',

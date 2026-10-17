@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/chatgptnetwork"
 	"github.com/gin-gonic/gin"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -72,6 +75,7 @@ func (t *chatGPTWebE2ETransport) clientFor(profile *tlsfingerprint.Profile) (*ht
 		},
 		Timeout: 300 * time.Second,
 	}
+	client.Transport = chatgptnetwork.Wrap(client.Transport.(*http.Transport), t.proxyURL != "")
 	t.clients[cacheKey] = client
 	return client, nil
 }
@@ -80,6 +84,11 @@ func (t *chatGPTWebE2ETransport) Do(req *http.Request, _ string, _ int64, _ int)
 	client, err := t.clientFor(nil)
 	if err != nil {
 		return nil, err
+	}
+	if os.Getenv("CGPT_WEB_E2E_TRACE") == "1" {
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+			fmt.Printf("web-e2e remote=%s\n", info.Conn.RemoteAddr())
+		}}))
 	}
 	resp, err := client.Do(req)
 	if os.Getenv("CGPT_WEB_E2E_TRACE") == "1" {
@@ -105,7 +114,22 @@ func (t *chatGPTWebE2ETransport) DoWithTLS(
 	if err != nil {
 		return nil, err
 	}
+	if os.Getenv("CGPT_WEB_E2E_TRACE") == "1" {
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+			fmt.Printf("web-e2e remote=%s\n", info.Conn.RemoteAddr())
+		}}))
+	}
 	resp, err := client.Do(req)
+	// Never log challenge payloads or proofs.
+	if err == nil && resp != nil && req.URL.Path == "/backend-api/sentinel/chat-requirements/prepare" && os.Getenv("CGPT_WEB_E2E_TRACE") == "1" {
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		if readErr != nil {
+			return nil, readErr
+		}
+		fmt.Printf("web-e2e sentinel vm_required=%t vm_payload_present=%t pow_required=%t\n", gjson.GetBytes(body, "turnstile.required").Bool(), gjson.GetBytes(body, "turnstile.dx").String() != "", gjson.GetBytes(body, "proofofwork.required").Bool())
+	}
 	if os.Getenv("CGPT_WEB_E2E_TRACE") == "1" {
 		status := 0
 		challenge := false
@@ -196,7 +220,7 @@ func TestChatGPTWebE2ESentinelAndImageQuota(t *testing.T) {
 
 	remaining, err := session.imageQuota(ctx)
 	require.NoError(t, err)
-	t.Logf("image_gen remaining=%d", remaining)
+	t.Logf("image_gen remaining=%d vm_proof_present=%t", remaining, sentinel.TurnstileToken != "")
 }
 
 // 复用已生成的会话与指针做下载诊断，避免每次重新生图。
@@ -377,7 +401,9 @@ func TestChatGPTWebE2EWebAccountTypeGenerations(t *testing.T) {
 	}
 	result, err := service.ForwardImages(context.Request.Context(), context, account, nil, parsed, "")
 	require.NoError(t, err)
-	require.Equal(t, 1, result.ImageCount)
+	// The web upstream can return multiple assets for one accepted turn.
+	require.GreaterOrEqual(t, result.ImageCount, 1)
+	t.Logf("returned images=%d", result.ImageCount)
 	chatGPTWebE2EAssertImageResponse(t, recorder)
 	if dir := os.Getenv("CGPT_WEB_E2E_OUTPUT_DIR"); dir != "" {
 		raw, decodeErr := base64.StdEncoding.DecodeString(gjson.GetBytes(recorder.Body.Bytes(), "data.0.b64_json").String())
@@ -470,4 +496,21 @@ func TestChatGPTWebE2EGenerateImage(t *testing.T) {
 	require.True(t, isChatGPTWebImageBytes(raw), "downloaded bytes are not a known image format")
 	t.Logf("image bytes=%d", len(raw))
 	require.NoError(t, os.WriteFile("/tmp/c2a/e2e_generated.png", raw, 0o600))
+}
+
+// Read one explicitly supplied test conversation without submitting a new turn.
+func TestChatGPTWebE2EInspectConversation(t *testing.T) {
+	id := strings.TrimSpace(os.Getenv("CGPT_WEB_E2E_CONV_ID"))
+	if id == "" {
+		t.Skip("CGPT_WEB_E2E_CONV_ID is not set")
+	}
+	session := chatGPTWebE2ESession(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := session.doJSON(ctx, http.MethodGet, "/backend-api/conversations/"+url.PathEscape(id)+"?num_turns=10&include_has_versions=true", nil, map[string]string{"Accept": "application/json"})
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	require.NoError(t, err)
+	t.Logf("conversation read status=%d retry_after=%q error_code=%q", resp.StatusCode, resp.Header.Get("Retry-After"), gjson.GetBytes(body, "detail.code").String())
 }

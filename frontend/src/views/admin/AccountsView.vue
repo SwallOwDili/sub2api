@@ -263,7 +263,7 @@
                   :auth-mode="getOpenAIAuthMode(row)"
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
-                  :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
+                  :subscription-expires-at="row.platform === 'openai' && (row.type === 'oauth' || row.type === 'web-image') && !row.parent_account_id ? undefined : row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
                 <span
                   v-if="getAntigravityTierLabel(row)"
                   :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
@@ -271,6 +271,10 @@
                   {{ getAntigravityTierLabel(row) }}
                 </span>
               </div>
+              <ChatGPTEntitlementCell
+                v-if="row.platform === 'openai' && (row.type === 'oauth' || row.type === 'web-image') && !row.parent_account_id"
+                :account="row"
+              />
               <div
                 v-if="getOpenAICompactMeta(row)"
                 :class="[
@@ -487,6 +491,7 @@
 </template>
 
 <script setup lang="ts">
+import ChatGPTEntitlementCell from '@/components/account/ChatGPTEntitlementCell.vue'
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -526,7 +531,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
-import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey, isNativeImageAccount } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -738,7 +743,7 @@ const accountSupportsBatchUsage = (account: Account) => {
   }
   if (account.platform === 'gemini') return true
   if (account.platform === 'antigravity') return account.type === 'oauth'
-  if (account.platform === 'openai') return account.type === 'oauth'
+  if (account.platform === 'openai') return account.type === 'oauth' && !isNativeImageAccount(account)
   if (account.platform === 'grok') return account.type === 'oauth'
   return false
 }
