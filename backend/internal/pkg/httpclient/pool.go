@@ -90,7 +90,7 @@ func buildClient(opts Options) (*http.Client, error) {
 		return nil, err
 	}
 
-	var rt http.RoundTripper = chatgptnetwork.Wrap(transport, strings.TrimSpace(opts.ProxyURL) != "")
+	rt := chatgptnetwork.Wrap(transport, strings.TrimSpace(opts.ProxyURL) != "")
 	if opts.ValidateResolvedIP && !opts.AllowPrivateHosts {
 		rt = newValidatedTransport(rt)
 	}

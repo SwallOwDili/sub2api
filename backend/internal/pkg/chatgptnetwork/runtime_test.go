@@ -20,7 +20,10 @@ func TestRuntimeToggleSelectsSeparatePools(t *testing.T) {
 		networks = append(networks, network)
 		return nil, errors.New("observed")
 	}}
-	rt := Wrap(base, false).(*transport)
+	rt, ok := Wrap(base, false).(*transport)
+	if !ok {
+		t.Fatal("unexpected transport type")
+	}
 	defer rt.CloseIdleConnections()
 	for _, enabled := range []bool{false, true, false, true} {
 		SetEnabled(enabled)
@@ -51,7 +54,7 @@ func TestRuntimeToggleDoesNotReuseIPv4Connection(t *testing.T) {
 		t.Skip(err)
 	}
 	v6 := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ipv6") }))
-	v6.Listener.Close()
+	_ = v6.Listener.Close()
 	v6.Listener = ln
 	v6.Start()
 	defer v6.Close()
@@ -71,7 +74,7 @@ func TestRuntimeToggleDoesNotReuseIPv4Connection(t *testing.T) {
 			t.Fatal(err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		want := "ipv4"
 		if enabled {
 			want = "ipv6"

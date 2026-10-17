@@ -76,7 +76,7 @@ func TestIPv6SocketAndNoIPv4Fallback(t *testing.T) {
 	if err != nil {
 		t.Skipf("IPv6 loopback unavailable: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	tr := &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, ln.Addr().String())
 	}}
@@ -85,8 +85,12 @@ func TestIPv6SocketAndNoIPv4Fallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
-	if conn.RemoteAddr().(*net.TCPAddr).IP.To4() != nil {
+	defer func(c net.Conn) { _ = c.Close() }(conn)
+	addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		t.Fatal("unexpected address type")
+	}
+	if addr.IP.To4() != nil {
 		t.Fatal("not IPv6")
 	}
 	tr = &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -94,7 +98,7 @@ func TestIPv6SocketAndNoIPv4Fallback(t *testing.T) {
 	}}
 	Apply(tr, false)
 	if conn, err = tr.DialContext(context.Background(), "tcp", "chatgpt.com:443"); err == nil {
-		conn.Close()
+		_ = conn.Close()
 		t.Fatal("unexpected IPv4 fallback")
 	}
 }

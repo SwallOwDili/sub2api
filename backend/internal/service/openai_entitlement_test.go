@@ -122,7 +122,8 @@ func TestRefreshAccountEntitlementStoredIdentity(t *testing.T) {
 				require.Equal(t, requested, credentials["chatgpt_account_id"])
 				require.Equal(t, "new-access", credentials["access_token"])
 				require.Equal(t, "new-refresh", credentials["refresh_token"])
-				got := credentials["chatgpt_entitlement"].(map[string]any)
+				got, ok := credentials["chatgpt_entitlement"].(map[string]any)
+				require.True(t, ok, "entitlement snapshot must be an object")
 				if scenario == "other_account_only" {
 					require.Equal(t, previous, got, "never replace the snapshot with another account's entitlement")
 				} else {
