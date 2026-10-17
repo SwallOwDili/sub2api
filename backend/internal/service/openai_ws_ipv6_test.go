@@ -8,7 +8,10 @@ import (
 
 func TestOpenAIWSChatGPTIPv6Policy(t *testing.T) {
 	t.Setenv(chatgptnetwork.EnvIPv6Only, "true")
-	d := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	d, ok := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	if !ok {
+		t.Fatal("unexpected WebSocket dialer type")
+	}
 	for _, proxy := range []string{"http://127.0.0.1:7890", "socks5://127.0.0.1:7890"} {
 		client, err := d.proxyHTTPClient(proxy)
 		if err != nil {
