@@ -28,7 +28,7 @@ func TestPolicyScopeAndDialers(t *testing.T) {
 					for _, fn := range []func(context.Context, string, string) (net.Conn, error){tr.DialContext, tr.DialTLSContext} {
 						called = false
 						_, err := fn(context.Background(), "tcp", net.JoinHostPort(host, "443"))
-						blocked := isChatGPT(host) && (value == "bad" || (value == "true" && proxied))
+						blocked := isChatGPT(host) && value == "bad"
 						if blocked {
 							if called || err == nil {
 								t.Fatal("must fail before dialing")
@@ -52,7 +52,7 @@ func TestPolicyScopeAndDialers(t *testing.T) {
 	}
 }
 
-func TestHTTPProxyGuard(t *testing.T) {
+func TestHTTPProxyUsesCustomTunnel(t *testing.T) {
 	t.Setenv(EnvIPv6Only, "true")
 	p, _ := url.Parse("http://127.0.0.1:1234")
 	tr := &http.Transport{Proxy: http.ProxyURL(p)}
@@ -61,8 +61,8 @@ func TestHTTPProxyGuard(t *testing.T) {
 		req, _ := http.NewRequest("GET", "https://"+host, nil)
 		got, err := tr.Proxy(req)
 		if host == "chatgpt.com" {
-			if err == nil {
-				t.Fatal("proxy not blocked")
+			if err != nil || got != nil {
+				t.Fatal("ChatGPT must use the IPv6 tunnel dialer")
 			}
 		} else if err != nil || got != p {
 			t.Fatal("other platform affected")
@@ -100,5 +100,21 @@ func TestIPv6SocketAndNoIPv4Fallback(t *testing.T) {
 	if conn, err = tr.DialContext(context.Background(), "tcp", "chatgpt.com:443"); err == nil {
 		_ = conn.Close()
 		t.Fatal("unexpected IPv4 fallback")
+	}
+}
+
+func TestApplyPreservesOtherHostCustomTLSWithProxy(t *testing.T) {
+	t.Setenv(EnvIPv6Only, "true")
+	observed := errors.New("custom TLS")
+	p, _ := url.Parse("http://proxy.test:8080")
+	tr := &http.Transport{Proxy: http.ProxyURL(p), DialTLSContext: func(_ context.Context, network, addr string) (net.Conn, error) {
+		if network != "tcp" || addr != "api.anthropic.com:443" {
+			t.Fatalf("unexpected dial %s %s", network, addr)
+		}
+		return nil, observed
+	}}
+	Apply(tr, true)
+	if _, err := tr.DialTLSContext(context.Background(), "tcp", "api.anthropic.com:443"); !errors.Is(err, observed) {
+		t.Fatalf("custom TLS changed: %v", err)
 	}
 }

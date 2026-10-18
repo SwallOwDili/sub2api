@@ -1,9 +1,12 @@
 package service
 
 import (
-	"github.com/Wei-Shaw/sub2api/internal/pkg/chatgptnetwork"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/chatgptnetwork"
+	"github.com/Wei-Shaw/sub2api/internal/testutil/netfixture"
 )
 
 func TestOpenAIWSChatGPTIPv6Policy(t *testing.T) {
@@ -12,17 +15,21 @@ func TestOpenAIWSChatGPTIPv6Policy(t *testing.T) {
 	if !ok {
 		t.Fatal("unexpected WebSocket dialer type")
 	}
-	for _, proxy := range []string{"http://127.0.0.1:7890", "socks5://127.0.0.1:7890"} {
-		client, err := d.proxyHTTPClient(proxy)
+	netfixture.IPv6DNS(t, "::1")
+	for _, scheme := range []string{"http", "socks5", "socks5h"} {
+		proxy, seen := netfixture.RecordingProxy(t, scheme)
+		client, err := d.proxyHTTPClient(proxy.String())
 		if err != nil {
 			t.Fatal(err)
 		}
-		tr := client.Transport
+		client.Timeout = 3 * time.Second
 		defer client.CloseIdleConnections()
 		req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/codex/responses", nil)
-		_, err = tr.RoundTrip(req)
-		if (err != nil) != (proxy != "") {
-			t.Fatalf("proxy=%s err=%v", proxy, err)
+		resp, err := client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			t.Fatal("proxy rejection should fail")
 		}
+		netfixture.AssertIPv6Proxy(t, seen, "443", scheme != "http")
 	}
 }

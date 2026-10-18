@@ -97,11 +97,15 @@ func Enabled() bool {
 
 type transport struct {
 	configure func(*http.Transport) error
-	initErr   error
 	base      *http.Transport
 	proxy     bool
 	mu        sync.Mutex
-	ipv6      *http.Transport
+	ipv6      map[string]*ipv6Transport
+}
+
+type ipv6Transport struct {
+	transport *http.Transport
+	err       error
 }
 
 // Wrap keeps separate pools so toggling cannot reuse an opposite-family socket.
@@ -117,30 +121,53 @@ func (t *transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if !isChatGPT(r.URL.Hostname()) || !enabledForContext(r.Context()) {
 		return t.base.RoundTrip(r)
 	}
-	t.mu.Lock()
-	if t.ipv6 == nil {
-		t.ipv6 = t.base.Clone()
-		applyIPv6(t.ipv6, t.proxy, nil)
-		if t.configure != nil {
-			t.initErr = t.configure(t.ipv6)
+	// Select using the real request (not a synthetic dial request), and keep
+	// pools separate for different proxies, including per-request proxy selectors.
+	var selected *url.URL
+	if t.base.Proxy != nil {
+		var err error
+		selected, err = t.base.Proxy(r)
+		if err != nil {
+			return nil, err
 		}
 	}
-	v6 := t.ipv6
-	err := t.initErr
-	t.mu.Unlock()
-	if err != nil {
-		return nil, err
+	key := ""
+	if selected != nil {
+		key = selected.String()
 	}
-	return v6.RoundTrip(r)
+	t.mu.Lock()
+	if t.ipv6 == nil {
+		t.ipv6 = make(map[string]*ipv6Transport)
+	}
+	entry := t.ipv6[key]
+	if entry == nil {
+		clone := t.base.Clone()
+		clone.Proxy = nil
+		if selected != nil {
+			clone.Proxy = http.ProxyURL(selected)
+		}
+		applyIPv6(clone, t.proxy, nil)
+		entry = &ipv6Transport{transport: clone}
+		if t.configure != nil {
+			entry.err = t.configure(clone)
+		}
+		t.ipv6[key] = entry
+	}
+	t.mu.Unlock()
+	if entry.err != nil {
+		return nil, entry.err
+	}
+	return entry.transport.RoundTrip(r)
 }
 func (t *transport) CloseIdleConnections() {
 	t.base.CloseIdleConnections()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.ipv6 != nil {
-		t.ipv6.CloseIdleConnections()
+	for _, entry := range t.ipv6 {
+		entry.transport.CloseIdleConnections()
 	}
 }
+
 func BaseTransport(rt http.RoundTripper) (*http.Transport, bool) {
 	if t, ok := rt.(*transport); ok {
 		return t.base, true

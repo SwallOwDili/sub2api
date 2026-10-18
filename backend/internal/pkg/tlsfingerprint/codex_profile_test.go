@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/testutil/netfixture"
 )
 
 // This regression fixture was captured from a standalone codex-cli 0.160.1
@@ -211,4 +213,76 @@ func clientHelloJA3(record []byte) (string, map[uint16]string) {
 		p = q + size
 	}
 	return fmt.Sprintf("%d,%s,%s,%s,%s", version, strings.Join(ciphers, "-"), strings.Join(extensions, "-"), strings.Join(curves, "-"), strings.Join(points, "-")), payloads
+}
+
+// The proxy must receive an IPv6 literal, but the captured inner ClientHello
+// must still carry ChatGPT SNI and the original Codex fingerprint.
+func TestCodexCLIClientHelloThroughIPv6Proxy(t *testing.T) {
+	netfixture.IPv6DNS(t, "::1")
+	for _, scheme := range []string{"http", "https", "socks5", "socks5h"} {
+		t.Run(scheme, func(t *testing.T) {
+			ln, err := net.Listen("tcp6", "[::1]:0")
+			if err != nil {
+				t.Skip(err)
+			}
+			defer func() { _ = ln.Close() }()
+			hello := make(chan map[uint16]string, 1)
+			go func() {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer func() { _ = c.Close() }()
+				_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+				header := make([]byte, 5)
+				if _, err := io.ReadFull(c, header); err != nil {
+					return
+				}
+				body := make([]byte, int(binary.BigEndian.Uint16(header[3:])))
+				if _, err := io.ReadFull(c, body); err != nil {
+					return
+				}
+				ja3, ext := clientHelloJA3(body)
+				ext[65535] = ja3
+				hello <- ext
+			}()
+			p, seen, cert := netfixture.TunnelProxy(t, scheme)
+			_, port, err := net.SplitHostPort(ln.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := net.JoinHostPort("chatgpt.com", port)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if strings.HasPrefix(scheme, "socks") {
+				if conn, err := NewSOCKS5ProxyDialer(CodexCLIProfile(), p).DialTLSContext(ctx, "tcp6", addr); err == nil {
+					_ = conn.Close()
+					t.Fatal("capture server should terminate handshake")
+				}
+			} else {
+				d := NewHTTPProxyDialer(CodexCLIProfile(), p)
+				if cert != nil {
+					roots := x509.NewCertPool()
+					roots.AddCert(cert)
+					d.proxyTLSConfig = &tls.Config{RootCAs: roots}
+				}
+				if conn, err := d.DialTLSContext(ctx, "tcp6", addr); err == nil {
+					_ = conn.Close()
+					t.Fatal("capture server should terminate handshake")
+				}
+			}
+			netfixture.AssertIPv6Proxy(t, seen, port, strings.HasPrefix(scheme, "socks"))
+			select {
+			case ext := <-hello:
+				if ext[65535] != codexCLIJA3 {
+					t.Fatalf("JA3 changed: %s", ext[65535])
+				}
+				if !strings.Contains(ext[0], hex.EncodeToString([]byte("chatgpt.com"))) {
+					t.Fatalf("SNI lost: %s", ext[0])
+				}
+			case <-ctx.Done():
+				t.Fatal("missing ClientHello")
+			}
+		})
+	}
 }
