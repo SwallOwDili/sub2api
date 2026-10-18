@@ -40,8 +40,8 @@ func IPv6DNS(t *testing.T, ips ...string) {
 			if q.Unpack(b[:n]) != nil {
 				continue
 			}
-			q.Header.Response = true
-			q.Header.RecursionAvailable = true
+			q.Response = true
+			q.RecursionAvailable = true
 			for _, question := range q.Questions {
 				if question.Type != dnsmessage.TypeAAAA {
 					continue
@@ -214,6 +214,13 @@ func TunnelProxy(t *testing.T, scheme string) (*url.URL, <-chan ProxyRequest, *x
 			w.WriteHeader(400)
 			return
 		}
+		host, _, err := net.SplitHostPort(r.Host)
+		ip := net.ParseIP(host)
+		if err != nil || ip == nil || !ip.IsLoopback() {
+			http.Error(w, "test proxy accepts only loopback destinations", http.StatusBadRequest)
+			return
+		}
+		//nolint:gosec // Test fixture rejects all destinations except literal loopback IPs above.
 		dest, err := net.DialTimeout("tcp", r.Host, 3*time.Second)
 		if err != nil {
 			w.WriteHeader(502)
