@@ -45,8 +45,11 @@ func validateOpenAIImageChannel(a *Account) error {
 }
 
 // The same option contract is used by scheduling and the final forwarding guard.
+// All partial_images values are treated as zero on the Native-Image channel.
+// Native Images currently returns final JSON only. Accept the option locally,
+// omit it from the upstream JSON, and emit only the genuine completion event.
 func supportsOpenAINativeImageOptions(parsed *OpenAIImagesRequest) bool {
-	return parsed != nil && parsed.N <= 1 && !parsed.HasMask && parsed.MaskUpload == nil && parsed.MaskImageURL == "" && parsed.PartialImages == nil && parsed.OutputCompression == nil && (parsed.OutputFormat == "" || parsed.OutputFormat == "png") && parsed.Moderation == "" && parsed.InputFidelity == "" && parsed.Style == ""
+	return parsed != nil && parsed.N <= 1 && !parsed.HasMask && parsed.MaskUpload == nil && parsed.MaskImageURL == "" && parsed.OutputCompression == nil && (parsed.OutputFormat == "" || parsed.OutputFormat == "png") && parsed.Moderation == "" && parsed.InputFidelity == "" && parsed.Style == ""
 }
 
 type nativeImageOptionsContextKey struct{}
@@ -92,7 +95,7 @@ func (s *OpenAIGatewayService) OpenAIImagesOptionsUnsupported(ctx context.Contex
 
 func buildOpenAINativeImagesBody(parsed *OpenAIImagesRequest, model string) ([]byte, error) {
 	if !supportsOpenAINativeImageOptions(parsed) {
-		return nil, infraerrors.BadRequest("UNSUPPORTED_NATIVE_IMAGE_OPTIONS", "Native-Image supports one PNG per request, without masks, partial images, compression, moderation, style or input_fidelity options")
+		return nil, infraerrors.BadRequest("UNSUPPORTED_NATIVE_IMAGE_OPTIONS", "Native-Image supports one PNG per request, without masks, compression, moderation, style or input_fidelity options")
 	}
 	payload := map[string]any{"model": model, "prompt": parsed.Prompt, "n": 1}
 	for key, value := range map[string]string{"quality": parsed.Quality, "size": parsed.Size, "background": parsed.Background} {
@@ -243,6 +246,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesNative(ctx context.Context, c 
 		c.Header("x-request-id", requestID)
 	}
 	if parsed.Stream {
+		if parsed.PartialImages != nil {
+			// Explicitly expose the final-only fallback; never fabricate previews.
+			c.Header("X-Sub2api-Image-Preview", "final-only")
+		}
 		StopOpenAIImagesJSONKeepaliveCommitted(c)
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")

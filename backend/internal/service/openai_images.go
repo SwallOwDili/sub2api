@@ -278,12 +278,9 @@ func parseOpenAIImagesJSONRequest(body []byte, req *OpenAIImagesRequest) error {
 		v := int(outputCompression.Int())
 		req.OutputCompression = &v
 	}
-	if partialImages := gjson.GetBytes(body, "partial_images"); partialImages.Exists() {
-		if partialImages.Type != gjson.Number {
-			return fmt.Errorf("invalid partial_images field type")
-		}
-		v := int(partialImages.Int())
-		req.PartialImages = &v
+	if gjson.GetBytes(body, "partial_images").Exists() {
+		// Preview requests are normalized to final-only regardless of value/type.
+		req.PartialImages = new(int)
 	}
 	if req.IsEdits() {
 		images := gjson.GetBytes(body, "images")
@@ -429,11 +426,8 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 			req.OutputCompression = &n
 			req.HasNativeOptions = true
 		case "partial_images":
-			n, err := strconv.Atoi(value)
-			if err != nil {
-				return fmt.Errorf("invalid partial_images field value")
-			}
-			req.PartialImages = &n
+			// Do not reject arbitrary client preview counts or textual values.
+			req.PartialImages = new(int)
 			req.HasNativeOptions = true
 		default:
 			if isOpenAINativeImageOption(name) && value != "" {

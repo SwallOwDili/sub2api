@@ -118,7 +118,7 @@ func TestNativeImageEligibilityAndValidation(t *testing.T) {
 }
 
 func TestNativeImageUnsupportedOptionsAndEdits(t *testing.T) {
-	for _, req := range []*OpenAIImagesRequest{{N: 2}, {HasMask: true}, {OutputFormat: "jpeg"}, {Moderation: "low"}, {PartialImages: new(int)}} {
+	for _, req := range []*OpenAIImagesRequest{{N: 2}, {HasMask: true}, {OutputFormat: "jpeg"}, {Moderation: "low"}} {
 		_, err := buildOpenAINativeImagesBody(req, "gpt-image-2")
 		require.Error(t, err)
 	}

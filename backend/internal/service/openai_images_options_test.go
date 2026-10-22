@@ -26,7 +26,7 @@ func TestNativeImageOptionsScheduling(t *testing.T) {
 			{"mask URL", OpenAIImagesRequest{MaskImageURL: "https://example.com/mask.png"}},
 			{"mask upload", OpenAIImagesRequest{MaskUpload: &OpenAIImagesUpload{}}},
 			{"jpeg", OpenAIImagesRequest{OutputFormat: "jpeg"}}, {"webp", OpenAIImagesRequest{OutputFormat: "webp"}},
-			{"partial", OpenAIImagesRequest{PartialImages: new(int)}}, {"compression", OpenAIImagesRequest{OutputCompression: new(int)}},
+			{"compression", OpenAIImagesRequest{OutputCompression: new(int)}},
 			{"moderation", OpenAIImagesRequest{Moderation: "low"}}, {"style", OpenAIImagesRequest{Style: "vivid"}},
 			{"fidelity", OpenAIImagesRequest{InputFidelity: "high"}},
 		} {
@@ -93,4 +93,24 @@ func TestNativeImageOptionsOrdinaryRequestStillEligible(t *testing.T) {
 		selection.ReleaseFunc()
 	}
 	require.False(t, svc.OpenAIImagesOptionsUnsupported(ctx, nil, "gpt-image-2"))
+}
+
+func TestNativeImagePartialOptionsCompatibility(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, count := range []int{-1, 0, 1, 2, 3, 4, 9999} {
+			t.Run(fmt.Sprintf("stream=%v/partial=%d", stream, count), func(t *testing.T) {
+				req := &OpenAIImagesRequest{N: 1, Stream: stream, PartialImages: &count}
+				want := true
+				require.Equal(t, want, supportsOpenAINativeImageOptions(req))
+				ctx := WithOpenAIImagesRequestOptions(context.Background(), req)
+				require.Equal(t, want, accountSupportsOpenAIImageRequestOptions(ctx, nativeImageTestAccount()))
+				_, err := buildOpenAINativeImagesBody(req, "gpt-image-2.5-sunburst")
+				if want {
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err)
+				}
+			})
+		}
+	}
 }

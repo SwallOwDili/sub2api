@@ -287,7 +287,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEditWithMaskAndNa
 	require.NotNil(t, parsed.OutputCompression)
 	require.Equal(t, 80, *parsed.OutputCompression)
 	require.NotNil(t, parsed.PartialImages)
-	require.Equal(t, 2, *parsed.PartialImages)
+	require.Equal(t, 0, *parsed.PartialImages)
 	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
 }
 
@@ -393,7 +393,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSONEditURLs(t *testing.T)
 	require.NotNil(t, parsed.OutputCompression)
 	require.Equal(t, 90, *parsed.OutputCompression)
 	require.NotNil(t, parsed.PartialImages)
-	require.Equal(t, 2, *parsed.PartialImages)
+	require.Equal(t, 0, *parsed.PartialImages)
 	require.True(t, parsed.HasMask)
 	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
 }
