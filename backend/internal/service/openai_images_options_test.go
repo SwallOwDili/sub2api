@@ -28,7 +28,6 @@ func TestNativeImageOptionsScheduling(t *testing.T) {
 			{"jpeg", OpenAIImagesRequest{OutputFormat: "jpeg"}}, {"webp", OpenAIImagesRequest{OutputFormat: "webp"}},
 			{"compression", OpenAIImagesRequest{OutputCompression: new(int)}},
 			{"moderation", OpenAIImagesRequest{Moderation: "low"}}, {"style", OpenAIImagesRequest{Style: "vivid"}},
-			{"fidelity", OpenAIImagesRequest{InputFidelity: "high"}},
 		} {
 			t.Run(fmt.Sprintf("advanced=%v/%s", advanced, tc.name), func(t *testing.T) {
 				native := *nativeImageTestAccount()

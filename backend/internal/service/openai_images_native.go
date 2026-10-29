@@ -49,7 +49,11 @@ func validateOpenAIImageChannel(a *Account) error {
 // Native Images currently returns final JSON only. Accept the option locally,
 // omit it from the upstream JSON, and emit only the genuine completion event.
 func supportsOpenAINativeImageOptions(parsed *OpenAIImagesRequest) bool {
-	return parsed != nil && parsed.N <= 1 && !parsed.HasMask && parsed.MaskUpload == nil && parsed.MaskImageURL == "" && parsed.OutputCompression == nil && (parsed.OutputFormat == "" || parsed.OutputFormat == "png") && parsed.Moderation == "" && parsed.InputFidelity == "" && parsed.Style == ""
+	// input_fidelity is intentionally ignored on the native channel: the upstream
+	// native endpoint does not accept it, and buildOpenAINativeImagesBody never
+	// forwards it anyway. Dropping it here (instead of rejecting) lets clients
+	// that send input_fidelity still reach a native account.
+	return parsed != nil && parsed.N <= 1 && !parsed.HasMask && parsed.MaskUpload == nil && parsed.MaskImageURL == "" && parsed.OutputCompression == nil && (parsed.OutputFormat == "" || parsed.OutputFormat == "png") && parsed.Moderation == "" && parsed.Style == ""
 }
 
 type nativeImageOptionsContextKey struct{}
