@@ -149,6 +149,7 @@ docs/screenshots/*
 !docs/screenshots/mobile-account-actions-menu.png
 .serena/
 .codex/
+.workbuddy/
 frontend/coverage/
 aicodex
 output/
